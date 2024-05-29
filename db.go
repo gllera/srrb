@@ -171,9 +171,9 @@ func (p *Packer) flush(path string) {
 }
 
 func (db *DB) pack_latest_path() string {
-	return filepath.Join(output_folder, fmt.Sprintf("%v.json.gz", db.Latest))
+	return filepath.Join(output_folder, fmt.Sprintf("%v.gz", db.Latest))
 }
 
 func (db *DB) pack_path() string {
-	return filepath.Join(output_folder, fmt.Sprintf("%v.json.gz", db.PackIds))
+	return filepath.Join(output_folder, fmt.Sprintf("%v.gz", db.PackIds))
 }
