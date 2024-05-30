@@ -14,6 +14,7 @@ jobs:
         env:
           SRR_CDN_URL: ${{ vars.SRR_CDN_URL }}
         run: |
+          set -x
           wget -qP packs "$SRR_CDN_URL/db.json"
           LATEST=$( jq .latest packs/db.json )
           wget -qP packs "$SRR_CDN_URL/$LATEST.gz" || :
