@@ -19,18 +19,23 @@ var (
 )
 
 func main() {
-	cmds := map[string]command{
-		"add":   {"add", "Initialize an output folder"},
-		"debug": {"debug", "Initialize an output folder"},
+	cmds := []command{
+		{"add [--title|-t TITLE] [--tag|-g TAG] [--module|-m MODULE ...] [--opml|-i] URL/PATH", "Subscribe/Import to RSS URL/Opml"},
+		{"fetch", "Download and process articles from subscriptions"},
+		{"rm ID", "Remove RSS subscription"},
+		{`debug (same as "add")`, `Equivalent to "add & fetch" but using "debug" folder and cleaning it up first`},
 	}
-
-	flags := map[string]*flag{
-		"jobs":          {"jobs", "j", &jobs, false, "Number of concurrent downloads"},
-		"max_download":  {"max_download", "m", &max_download, false, "Max downloads file KB size"},
-		"package_size":  {"package_size", "s", &package_size, false, "Target package KB size"},
-		"output_folder": {"output_folder", "o", &output_folder, false, "Destination output folder"},
-		"debug_folder":  {"debug_folder", "d", &debug_folder, false, "Destination debug folder"},
-		"config":        {"config", "c", &config_file, false, "Configuration file"},
+	params := []*flag{
+		{"jobs", "j", &jobs, false, "Number of concurrent downloads"},
+		{"max_download", "m", &max_download, false, "Max downloads file KB size"},
+		{"package_size", "s", &package_size, false, "Target package KB size"},
+		{"output_folder", "o", &output_folder, false, "Destination output folder"},
+		{"debug_folder", "d", &debug_folder, false, "Destination debug folder"},
+		{"config", "c", &config_file, false, "Configuration file"},
+	}
+	flags := map[string]*flag{}
+	for _, i := range params {
+		flags[i.long] = i
 	}
 
 	usage := func() {
