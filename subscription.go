@@ -1,10 +1,5 @@
 package main
 
-/**
- * @website http://albulescu.ro
- * @author Cosmin Albulescu <cosmin@albulescu.ro>
- */
-
 import (
 	"bytes"
 	"fmt"
