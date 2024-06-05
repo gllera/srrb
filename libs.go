@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 )
@@ -60,6 +61,18 @@ func New_Packer(path string) *Packer {
 	}
 
 	return p
+}
+
+func info(msg any) {
+	log.Println("INFO", msg)
+}
+
+func warning(msg any) {
+	log.Println("ERROR", msg)
+}
+
+func fatal(msg any) {
+	log.Fatalln("FATAL", msg)
 }
 
 type OPML struct {

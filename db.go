@@ -11,51 +11,53 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-type Item struct {
-	GUID      string `json:"-"`
-	SubId     int64  `json:"subId"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	Link      string `json:"link"`
-	Published int64  `json:"published"`
-	Prev      int64  `json:"prev,omitempty"`
-}
-
-type Subscription struct {
-	Id            int64    `json:"-"`
-	Url           string   `json:"url"`
-	Title         string   `json:"title,omitempty"`
-	Tag           string   `json:"tag,omitempty"`
-	Modules       []string `json:"modules,omitempty"`
-	Last_GUID     string   `json:"last_uuid,omitempty"`
-	Last_Mod_HTTP string   `json:"last_modified,omitempty"`
-	Last_PackId   int64    `json:"last_packid,omitempty"`
-	new_items     []*gofeed.Item
-}
+var db DB
 
 type DB struct {
-	SubIds        int64                   `json:"subids"`
-	PackIds       int64                   `json:"packids"`
-	Latest        bool                    `json:"latest"`
-	Subscriptions map[int64]*Subscription `json:"subscriptions"`
+	SubIds        int                   `json:"subids"`
+	PackIds       int                   `json:"packids"`
+	Latest        bool                  `json:"latest"`
+	Subscriptions map[int]*Subscription `json:"subscriptions"`
 	packer        *Packer
 	enc           *JsonEncoder
 	path          string
 	mutex         sync.Mutex
 }
 
+type Subscription struct {
+	Id            int      `json:"-"`
+	Url           string   `json:"url"`
+	Title         string   `json:"title,omitempty"`
+	Tag           string   `json:"tag,omitempty"`
+	Modules       []string `json:"modules,omitempty"`
+	Last_GUID     string   `json:"last_uuid,omitempty"`
+	Last_Mod_HTTP string   `json:"last_modified,omitempty"`
+	Last_PackId   int      `json:"last_packid,omitempty"`
+	new_items     []*gofeed.Item
+}
+
+type Item struct {
+	GUID      string `json:"-"`
+	SubId     int    `json:"subId"`
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	Link      string `json:"link"`
+	Published int    `json:"published"`
+	Prev      int    `json:"prev,omitempty"`
+}
+
 func New_DB() *DB {
 	db := &DB{
-		path: filepath.Join(output_folder, "db.json"),
+		path: filepath.Join(globals.OutputPath, "db.json"),
 		enc:  New_JsonEncoder(),
 	}
 
 	if _, err := os.Stat(db.path); err != nil {
-		if err = os.MkdirAll(output_folder, 0755); err != nil {
-			fatal(fmt.Sprintf(`Unable to initialize db file "%s". %v`, config_file, err))
+		if err = os.MkdirAll(globals.OutputPath, 0755); err != nil {
+			fatal(fmt.Sprintf(`Unable to initialize output folder "%s". %v`, globals.OutputPath, err))
 		}
 
-		db.Subscriptions = make(map[int64]*Subscription)
+		db.Subscriptions = make(map[int]*Subscription)
 		db.PackIds = 1
 		db.Commit()
 	} else {
@@ -93,10 +95,10 @@ func (db *DB) Store(sub *Subscription) {
 			Title:     fItem.Title,
 			Content:   fItem.Content,
 			Link:      fItem.Link,
-			Published: fItem.PublishedParsed.Unix(),
+			Published: int(fItem.PublishedParsed.Unix()),
 		}
 
-		if db.packer.buffer.Len()+item.Size() >= (package_size<<10)*7/2 {
+		if db.packer.buffer.Len()+item.Size() >= (globals.PackageSize<<10)*7/2 {
 			db.packer.flush(db.pack_path())
 			db.PackIds++
 		}
@@ -113,16 +115,50 @@ func (db *DB) Store(sub *Subscription) {
 	sub.Last_GUID = sub.new_items[0].GUID
 }
 
-func (db *DB) Add_sub(s *Subscription) {
+func (db *DB) Get_subs() map[int]*Subscription {
+	return db.Subscriptions
+}
+
+func (db *DB) Add_sub(s *Subscription) error {
 	s.Last_PackId = -1
 	s.Id = db.SubIds
 
 	db.Subscriptions[s.Id] = s
 	db.SubIds++
+
+	return nil
 }
 
-func (db *DB) Rm_sub(id int64) {
-	delete(db.Subscriptions, id)
+func (db *DB) Rm_sub(ids ...int) error {
+	for _, id := range ids {
+		delete(db.Subscriptions, id)
+	}
+
+	return nil
+}
+
+func (db *DB) Erase() {
+	_, err := os.Stat(globals.OutputPath)
+	if err != nil {
+		return
+	}
+
+	d, err := os.Open(globals.OutputPath)
+	if err != nil {
+		fatal(fmt.Sprintf(`Unable to open debug folder "%s". %v`, globals.OutputPath, err))
+	}
+	defer d.Close()
+
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		fatal(fmt.Sprintf(`Unable to read debug folder "%s". %v`, globals.OutputPath, err))
+	}
+	for _, name := range names {
+		full_name := filepath.Join(globals.OutputPath, name)
+		if err = os.RemoveAll(full_name); err != nil {
+			fatal(fmt.Sprintf(`Unable to remove content "%s" inside debug folder "%s". %v`, globals.OutputPath, full_name, err))
+		}
+	}
 }
 
 func (db *DB) Commit() {
@@ -171,9 +207,9 @@ func (p *Packer) flush(path string) {
 }
 
 func (db *DB) pack_latest_path() string {
-	return filepath.Join(output_folder, fmt.Sprintf("%v.gz", db.Latest))
+	return filepath.Join(globals.OutputPath, fmt.Sprintf("%v.gz", db.Latest))
 }
 
 func (db *DB) pack_path() string {
-	return filepath.Join(output_folder, fmt.Sprintf("%v.gz", db.PackIds))
+	return filepath.Join(globals.OutputPath, fmt.Sprintf("%v.gz", db.PackIds))
 }

@@ -11,6 +11,8 @@ require (
 
 require (
 	github.com/PuerkitoBio/goquery v1.9.2 // indirect
+	github.com/alecthomas/kong v0.9.0 // indirect
+	github.com/alecthomas/kong-yaml v0.2.0 // indirect
 	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
