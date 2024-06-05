@@ -25,7 +25,15 @@ func main() {
 		}),
 	)
 
+	if cli.Debug {
+		cli.OutputPath = cli.DebugPath
+	}
+
 	if err := ctx.Run(); err != nil {
+		fatal(err)
+	}
+
+	if err := db.Commit(); err != nil {
 		fatal(err)
 	}
 }

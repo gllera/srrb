@@ -46,35 +46,6 @@ type Item struct {
 	Prev      int    `json:"prev,omitempty"`
 }
 
-func New_DB() *DB {
-	db := &DB{
-		path: filepath.Join(globals.OutputPath, "db.json"),
-		enc:  New_JsonEncoder(),
-	}
-
-	if _, err := os.Stat(db.path); err != nil {
-		if err = os.MkdirAll(globals.OutputPath, 0755); err != nil {
-			fatal(fmt.Sprintf(`Unable to initialize output folder "%s". %v`, globals.OutputPath, err))
-		}
-
-		db.Subscriptions = make(map[int]*Subscription)
-		db.PackIds = 1
-		db.Commit()
-	} else {
-		if fi, err := os.ReadFile(db.path); err != nil {
-			fatal(fmt.Sprintf(`Unable to read db file "%s". Msg: %v`, db.path, err))
-		} else if err = json.Unmarshal(fi, db); err != nil {
-			fatal(fmt.Sprintf(`Unable to parse db file "%s". Msg: %v`, db.path, err))
-		}
-
-		for k, v := range db.Subscriptions {
-			v.Id = k
-		}
-	}
-
-	return db
-}
-
 func (db *DB) Store(sub *Subscription) {
 	if len(sub.new_items) == 0 {
 		return
@@ -115,21 +86,35 @@ func (db *DB) Store(sub *Subscription) {
 	sub.Last_GUID = sub.new_items[0].GUID
 }
 
-func (db *DB) Get_subs() map[int]*Subscription {
-	return db.Subscriptions
+func (db *DB) Get_subs() (map[int]*Subscription, error) {
+	if err := db.Init(); err != nil {
+		return nil, err
+	}
+
+	return db.Subscriptions, nil
 }
 
-func (db *DB) Add_sub(s *Subscription) error {
-	s.Last_PackId = -1
-	s.Id = db.SubIds
+func (db *DB) Add_subs(subs ...*Subscription) error {
+	if err := db.Init(); err != nil {
+		return err
+	}
 
-	db.Subscriptions[s.Id] = s
-	db.SubIds++
+	for _, s := range subs {
+		s.Last_PackId = -1
+		s.Id = db.SubIds
+
+		db.Subscriptions[s.Id] = s
+		db.SubIds++
+	}
 
 	return nil
 }
 
 func (db *DB) Rm_sub(ids ...int) error {
+	if err := db.Init(); err != nil {
+		return err
+	}
+
 	for _, id := range ids {
 		delete(db.Subscriptions, id)
 	}
@@ -161,9 +146,39 @@ func (db *DB) Erase() {
 	}
 }
 
-func (db *DB) Commit() {
-	var old_path string
+func (db *DB) Init() error {
+	if db.enc != nil {
+		return nil
+	}
 
+	db.PackIds = 1
+	db.Subscriptions = make(map[int]*Subscription)
+	db.path = filepath.Join(globals.OutputPath, "db.json")
+	db.enc = New_JsonEncoder()
+
+	if _, err := os.Stat(db.path); err != nil {
+		if err = os.MkdirAll(globals.OutputPath, 0755); err != nil {
+			return fmt.Errorf(`unable to initialize output folder "%s". %v`, globals.OutputPath, err)
+		}
+	} else if fi, err := os.ReadFile(db.path); err != nil {
+		return fmt.Errorf(`unable to read db file "%s". Msg: %v`, db.path, err)
+	} else if err = json.Unmarshal(fi, db); err != nil {
+		return fmt.Errorf(`unable to parse db file "%s". Msg: %v`, db.path, err)
+	}
+
+	for k, v := range db.Subscriptions {
+		v.Id = k
+	}
+
+	return nil
+}
+
+func (db *DB) Commit() error {
+	if db.enc == nil {
+		return nil
+	}
+
+	var old_path string
 	if db.packer != nil {
 		old_path = db.pack_latest_path()
 		db.Latest = !db.Latest
@@ -174,14 +189,16 @@ func (db *DB) Commit() {
 	bytes, _ := db.enc.Encode(db)
 
 	if err := os.WriteFile(tmp_db_file, bytes, 0644); err != nil {
-		fatal(fmt.Sprintf(`Unable to write tmp db file "%s". Msg: %v`, tmp_db_file, err))
+		return fmt.Errorf(`unable to write tmp db file "%s". Msg: %v`, tmp_db_file, err)
 	} else if err = os.Rename(tmp_db_file, db.path); err != nil {
-		fatal(fmt.Sprintf(`Unable to replace db file "%s" with "%s". Msg: %v`, db.path, tmp_db_file, err))
+		return fmt.Errorf(`unable to replace db file "%s" with "%s". Msg: %v`, db.path, tmp_db_file, err)
 	}
 
 	if old_path != "" {
 		os.Remove(old_path)
 	}
+
+	return nil
 }
 
 func (p *Item) Size() int {

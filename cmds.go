@@ -11,7 +11,7 @@ func (c *VersionCmd) Run() error {
 }
 
 func (c *AddCmd) Run() error {
-	return db.Add_sub(&Subscription{
+	return db.Add_subs(&Subscription{
 		Title:   c.Title,
 		Url:     c.URL.String(),
 		Tag:     c.Tag,
@@ -26,6 +26,7 @@ func (c *RmCmd) Run() error {
 func (c *FetchCmd) Run() error {
 	var wg sync.WaitGroup
 	jobs_ch := make(chan *Subscription)
+	defer close(jobs_ch)
 
 	for range globals.Jobs {
 		wg.Add(1)
@@ -48,11 +49,14 @@ func (c *FetchCmd) Run() error {
 		}()
 	}
 
-	for _, s := range db.Get_subs() {
+	subs, err := db.Get_subs()
+	if err != nil {
+		return err
+	}
+	for _, s := range subs {
 		jobs_ch <- s
 	}
 
-	close(jobs_ch)
 	wg.Wait()
 	return nil
 }
