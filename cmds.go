@@ -11,12 +11,30 @@ func (c *VersionCmd) Run() error {
 }
 
 func (c *AddCmd) Run() error {
-	return db.Add_subs(&Subscription{
+	if err := db.Add_subs(&Subscription{
 		Title:   c.Title,
 		Url:     c.URL.String(),
 		Tag:     c.Tag,
 		Modules: c.Parser,
-	})
+	}); err != nil {
+		return err
+	} else if globals.Debug {
+		return (&FetchCmd{}).Run()
+	}
+
+	return nil
+}
+
+func (c *ImportCmd) Run() error {
+	if subs, err := ParseOPML(c.Path); err != nil {
+		return err
+	} else if err = db.Add_subs(subs...); err != nil {
+		return err
+	} else if globals.Debug {
+		return (&FetchCmd{}).Run()
+	}
+
+	return nil
 }
 
 func (c *RmCmd) Run() error {
@@ -38,9 +56,9 @@ func (c *FetchCmd) Run() error {
 
 			for s := range jobs_ch {
 				if last_mod, err := s.Fetch(buffer); err != nil {
-					warning(fmt.Sprintf(`Something went wrong while fetching "%s" (id: %d). %v`, s.Url, s.Id, err))
+					warning(`Something went wrong while fetching "%s" (id: %d). %v`, s.Url, s.Id, err)
 				} else if err := s.Process(mod); err != nil {
-					warning(fmt.Sprintf(`Something went wrong while processing "%s" (id: %d). %v`, s.Url, s.Id, err))
+					warning(`Something went wrong while processing "%s" (id: %d). %v`, s.Url, s.Id, err)
 				} else {
 					s.Last_Mod_HTTP = last_mod
 					db.Store(s)
@@ -58,10 +76,5 @@ func (c *FetchCmd) Run() error {
 	}
 
 	wg.Wait()
-	return nil
-}
-
-func (c *ImportCmd) Run() error {
-	ParseOPML(c.Path)
 	return nil
 }

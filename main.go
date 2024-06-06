@@ -27,6 +27,9 @@ func main() {
 
 	if cli.Debug {
 		cli.OutputPath = cli.DebugPath
+		if err := db.Erase(); err != nil {
+			fatal(err)
+		}
 	}
 
 	if err := ctx.Run(); err != nil {
@@ -39,12 +42,12 @@ func main() {
 }
 
 type Globals struct {
-	Jobs        int    `short:"j" default:"16"    env:"SRR_JOBS"                     help:"Number of concurrent downloads."`
-	PackageSize int    `short:"s" default:"200"   env:"SRR_PACKAGE_SIZE"             help:"Target package size in KB."`
-	MaxDownload int    `short:"m" default:"5000"  env:"SRR_MAX_DOWNLOAD"             help:"Max downloadable file size in KB."`
-	OutputPath  string `short:"o" default:"packs" env:"SRR_OUTPUT_PATH"  type:"path" help:"Packages destination path."`
-	DebugPath   string `short:"d" default:"debug" env:"SRR_DEBUG_PATH"   type:"path" help:"Packages destination debug path."`
-	Debug       bool   `                                                             help:"Enable debug mode. Output to debug path and pre-cleanup."`
+	Jobs        int    `short:"j" default:"16"    env:"SRR_JOBS"         help:"Number of concurrent downloads."`
+	PackageSize int    `short:"s" default:"200"   env:"SRR_PACKAGE_SIZE" help:"Target package size in KB."`
+	MaxDownload int    `short:"m" default:"5000"  env:"SRR_MAX_DOWNLOAD" help:"Max downloadable file size in KB."`
+	OutputPath  string `short:"o" default:"packs" env:"SRR_OUTPUT_PATH"  help:"Packages destination path."`
+	DebugPath   string `short:"d" default:"debug" env:"SRR_DEBUG_PATH"   help:"Packages destination debug path."`
+	Debug       bool   `                                                 help:"Enable debug mode. Output to debug path and pre-cleanup."`
 }
 
 type CLI struct {

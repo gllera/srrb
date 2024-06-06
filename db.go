@@ -30,8 +30,8 @@ type Subscription struct {
 	Title         string   `json:"title,omitempty"`
 	Tag           string   `json:"tag,omitempty"`
 	Modules       []string `json:"modules,omitempty"`
-	Last_GUID     string   `json:"last_uuid,omitempty"`
-	Last_Mod_HTTP string   `json:"last_modified,omitempty"`
+	Last_GUID     uint     `json:"last_uuid,omitempty"`
+	Last_Mod_HTTP int64    `json:"last_modified,omitempty"`
 	Last_PackId   int      `json:"last_packid,omitempty"`
 	new_items     []*gofeed.Item
 }
@@ -83,7 +83,7 @@ func (db *DB) Store(sub *Subscription) {
 		db.packer.buffer.Write(data)
 	}
 
-	sub.Last_GUID = sub.new_items[0].GUID
+	sub.Last_GUID = hash(sub.new_items[0].GUID)
 }
 
 func (db *DB) Get_subs() (map[int]*Subscription, error) {
@@ -122,28 +122,31 @@ func (db *DB) Rm_sub(ids ...int) error {
 	return nil
 }
 
-func (db *DB) Erase() {
+func (db *DB) Erase() error {
 	_, err := os.Stat(globals.OutputPath)
 	if err != nil {
-		return
+		return nil
 	}
 
-	d, err := os.Open(globals.OutputPath)
+	dir, err := os.Open(globals.OutputPath)
 	if err != nil {
-		fatal(fmt.Sprintf(`Unable to open debug folder "%s". %v`, globals.OutputPath, err))
+		return fmt.Errorf(`unable to open debug folder "%s". %v`, globals.OutputPath, err)
 	}
-	defer d.Close()
+	defer dir.Close()
 
-	names, err := d.Readdirnames(-1)
+	names, err := dir.Readdirnames(-1)
 	if err != nil {
-		fatal(fmt.Sprintf(`Unable to read debug folder "%s". %v`, globals.OutputPath, err))
+		return fmt.Errorf(`unable to read debug folder "%s". %v`, globals.OutputPath, err)
 	}
+
 	for _, name := range names {
 		full_name := filepath.Join(globals.OutputPath, name)
 		if err = os.RemoveAll(full_name); err != nil {
-			fatal(fmt.Sprintf(`Unable to remove content "%s" inside debug folder "%s". %v`, globals.OutputPath, full_name, err))
+			return fmt.Errorf(`unable to remove content "%s" inside debug folder "%s". %v`, globals.OutputPath, full_name, err)
 		}
 	}
+
+	return nil
 }
 
 func (db *DB) Init() error {

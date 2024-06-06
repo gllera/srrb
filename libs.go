@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net/url"
@@ -63,12 +63,18 @@ func New_Packer(path string) *Packer {
 	return p
 }
 
-func info(msg any) {
-	log.Println("INFO", msg)
+func hash(s string) uint {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return uint(h.Sum32())
 }
 
-func warning(msg any) {
-	log.Println("ERROR", msg)
+func info(format string, v ...any) {
+	log.Printf("INFO "+format+"\n", v...)
+}
+
+func warning(format string, v ...any) {
+	log.Printf("ERROR "+format+"\n", v...)
 }
 
 func fatal(msg any) {
@@ -111,7 +117,7 @@ func ParseOPML(filePath string) ([]*Subscription, error) {
 				Tag:   tag,
 			})
 		} else if o.XMLURL != "" {
-			warning(fmt.Sprintf(`Ignoring invalid URL "%s"`, o.XMLURL))
+			warning(`Ignoring invalid URL "%s"`, o.XMLURL)
 		}
 	}
 
