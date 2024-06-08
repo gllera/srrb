@@ -7,7 +7,7 @@ import (
 	"encoding/xml"
 	"hash/fnv"
 	"io"
-	"log"
+	"log/slog"
 	"net/url"
 	"os"
 )
@@ -69,16 +69,9 @@ func hash(s string) uint {
 	return uint(h.Sum32())
 }
 
-func info(format string, v ...any) {
-	log.Printf("INFO "+format+"\n", v...)
-}
-
-func warning(format string, v ...any) {
-	log.Printf("ERROR "+format+"\n", v...)
-}
-
 func fatal(msg any) {
-	log.Fatalln("FATAL", msg)
+	slog.Error("%v", msg)
+	os.Exit(1)
 }
 
 type OPML struct {
@@ -117,7 +110,7 @@ func ParseOPML(filePath string) ([]*Subscription, error) {
 				Tag:   tag,
 			})
 		} else if o.XMLURL != "" {
-			warning(`Ignoring invalid URL "%s"`, o.XMLURL)
+			slog.Error(`Ignoring invalid URL "%s"`, o.XMLURL)
 		}
 	}
 

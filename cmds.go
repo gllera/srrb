@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -43,8 +44,7 @@ func (c *RmCmd) Run() error {
 
 func (c *FetchCmd) Run() error {
 	var wg sync.WaitGroup
-	jobs_ch := make(chan *Subscription)
-	defer close(jobs_ch)
+	jobs_ch := make(chan *Subscription, 50)
 
 	for range globals.Jobs {
 		wg.Add(1)
@@ -56,9 +56,9 @@ func (c *FetchCmd) Run() error {
 
 			for s := range jobs_ch {
 				if last_mod, err := s.Fetch(buffer); err != nil {
-					warning(`Something went wrong while fetching "%s" (id: %d). %v`, s.Url, s.Id, err)
+					slog.Error(`Something went wrong while fetching "%s" (id: %d). %v`, s.Url, s.Id, err)
 				} else if err := s.Process(mod); err != nil {
-					warning(`Something went wrong while processing "%s" (id: %d). %v`, s.Url, s.Id, err)
+					slog.Error(`Something went wrong while processing "%s" (id: %d). %v`, s.Url, s.Id, err)
 				} else {
 					s.Last_Mod_HTTP = last_mod
 					db.Store(s)
@@ -75,6 +75,7 @@ func (c *FetchCmd) Run() error {
 		jobs_ch <- s
 	}
 
+	close(jobs_ch)
 	wg.Wait()
 	return nil
 }

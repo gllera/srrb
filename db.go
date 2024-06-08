@@ -37,7 +37,6 @@ type Subscription struct {
 }
 
 type Item struct {
-	GUID      string `json:"-"`
 	SubId     int    `json:"subId"`
 	Title     string `json:"title"`
 	Content   string `json:"content"`
@@ -61,7 +60,6 @@ func (db *DB) Store(sub *Subscription) {
 	for i := len(sub.new_items) - 1; i >= 0; i-- {
 		fItem := sub.new_items[i]
 		item := Item{
-			GUID:      fItem.GUID,
 			SubId:     sub.Id,
 			Title:     fItem.Title,
 			Content:   fItem.Content,

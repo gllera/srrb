@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"net/url"
 
 	"github.com/alecthomas/kong"
@@ -26,6 +27,7 @@ func main() {
 	)
 
 	if cli.Debug {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 		cli.OutputPath = cli.DebugPath
 		if err := db.Erase(); err != nil {
 			fatal(err)
@@ -74,8 +76,8 @@ type FetchCmd struct {
 }
 
 type ImportCmd struct {
-	Path string `arg:"" type:"filecontent" help:"Subscriptions opml file."`
-	Tag  string `short:"g"                 help:"Subscriptions tag."`
+	Path string `arg:""    help:"Subscriptions opml file."`
+	Tag  string `short:"g" help:"Subscriptions tag."`
 }
 
 type VersionCmd struct {

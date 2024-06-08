@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -30,7 +31,7 @@ func (s *Subscription) Process(mod *Moduler) error {
 }
 
 func (s *Subscription) Fetch(buf []byte) (int64, error) {
-	info(`Downloading articles from "%s" (id: %d) ...`, s.Url, s.Id)
+	slog.Debug(`Downloading articles from "%s" (id: %d) ...`, s.Url, s.Id)
 
 	client := http.Client{Timeout: 10 * time.Second}
 	res, err := client.Get(s.Url)
@@ -39,11 +40,17 @@ func (s *Subscription) Fetch(buf []byte) (int64, error) {
 	}
 	defer res.Body.Close()
 
+	last_mod_str := res.Header.Get("Last-Modified")
 	var last_mod int64 = 0
-	if time, err := http.ParseTime(res.Header.Get("Last-Modified")); err == nil {
-		if last_mod = time.Unix(); last_mod == s.Last_Mod_HTTP {
-			info(`No update since last fetch on "%s" (id: %d)`, s.Url, s.Id)
-			return last_mod, nil
+	if last_mod_str != "" {
+		if time, err := http.ParseTime(last_mod_str); err != nil {
+			slog.Info(`Unable to parse "Last-Modified" http header from "%s" (id: %d)`, s.Url, s.Id)
+		} else {
+			last_mod = time.Unix()
+			if last_mod == s.Last_Mod_HTTP {
+				slog.Debug(`No update since last fetch on "%s" (id: %d)`, s.Url, s.Id)
+				return last_mod, nil
+			}
 		}
 	}
 
