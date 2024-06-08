@@ -42,19 +42,19 @@ func New_Packer(path string) *Packer {
 	if _, err := os.Stat(path); err == nil {
 		file, err := os.Open(path)
 		if err != nil {
-			fatal(err)
+			fatal("Unable to open file.", "path", path, "err", err.Error())
 		}
 		defer file.Close()
 
 		gReader, err := gzip.NewReader(file)
 		if err != nil {
-			fatal(err)
+			fatal("Unable to read file.", "path", path, "err", err.Error())
 		}
 		defer gReader.Close()
 
 		data, err := io.ReadAll(gReader)
 		if err != nil {
-			fatal(err)
+			fatal("Unable to read file.", "path", path, "err", err.Error())
 		}
 
 		p.buffer.Write(data)
@@ -69,8 +69,8 @@ func hash(s string) uint {
 	return uint(h.Sum32())
 }
 
-func fatal(msg any) {
-	slog.Error("%v", msg)
+func fatal(msg string, attr ...any) {
+	slog.Error(msg, attr...)
 	os.Exit(1)
 }
 
@@ -110,7 +110,7 @@ func ParseOPML(filePath string) ([]*Subscription, error) {
 				Tag:   tag,
 			})
 		} else if o.XMLURL != "" {
-			slog.Error(`Ignoring invalid URL "%s"`, o.XMLURL)
+			slog.Info("Ignoring invalid URL.", "url", o.XMLURL)
 		}
 	}
 

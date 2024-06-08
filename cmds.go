@@ -56,9 +56,9 @@ func (c *FetchCmd) Run() error {
 
 			for s := range jobs_ch {
 				if last_mod, err := s.Fetch(buffer); err != nil {
-					slog.Error(`Something went wrong while fetching "%s" (id: %d). %v`, s.Url, s.Id, err)
+					slog.Info("Something went wrong while fetching subscription.", "", s, "err", err.Error())
 				} else if err := s.Process(mod); err != nil {
-					slog.Error(`Something went wrong while processing "%s" (id: %d). %v`, s.Url, s.Id, err)
+					slog.Info("Something went wrong while processing subscription.", "", s, "err", err.Error())
 				} else {
 					s.Last_Mod_HTTP = last_mod
 					db.Store(s)

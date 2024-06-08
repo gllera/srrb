@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -34,6 +35,13 @@ type Subscription struct {
 	Last_Mod_HTTP int64    `json:"last_modified,omitempty"`
 	Last_PackId   int      `json:"last_packid,omitempty"`
 	new_items     []*gofeed.Item
+}
+
+func (s Subscription) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Int("id", s.Id),
+		slog.String("url", s.Url),
+	)
 }
 
 type Item struct {
@@ -209,16 +217,16 @@ func (p *Item) Size() int {
 func (p *Packer) flush(path string) {
 	nf, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		fatal(err)
+		fatal("Unable to open file.", "path", path, "err", err.Error())
 	}
 	defer nf.Close()
 
 	gw := gzip.NewWriter(nf)
 	if _, err = gw.Write(p.buffer.Bytes()); err != nil {
-		fatal(err)
+		fatal("Unable to write file.", "path", path, "err", err.Error())
 	}
 	if err = gw.Close(); err != nil {
-		fatal(err)
+		fatal("Unable to close file.", "path", path, "err", err.Error())
 	}
 
 	p.buffer.Reset()
