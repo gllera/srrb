@@ -8,7 +8,6 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.26
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/tdewolff/minify v2.3.6+incompatible
-	golang.org/x/exp v0.0.0-20240604190554-fc45aab8b7f8
 )
 
 require (

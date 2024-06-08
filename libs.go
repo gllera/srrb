@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"time"
 )
 
 type JsonEncoder struct {
@@ -122,4 +123,24 @@ func ParseOPML(filePath string) ([]*Subscription, error) {
 	}
 
 	return subs, nil
+}
+
+var httpTimeFormats = []string{
+	"Mon, _2 Jan 2006 15:04:05 GMT",
+	time.RFC850,
+	time.ANSIC,
+}
+
+func parseHTTPTime(text string) (int64, bool) {
+	if text == "" {
+		return 0, true
+	}
+
+	for _, layout := range httpTimeFormats {
+		if t, err := time.Parse(layout, text); err == nil {
+			return t.Unix(), true
+		}
+	}
+
+	return 0, false
 }
