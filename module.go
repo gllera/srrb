@@ -14,13 +14,13 @@ import (
 	"github.com/tdewolff/minify/html"
 )
 
-type Moduler struct {
+type Module struct {
 	sanitizer *bluemonday.Policy
 	minifier  *minify.M
 	enc       *JsonEncoder
 }
 
-func New_Moduler() *Moduler {
+func New_Moduler() *Module {
 	policy := bluemonday.StrictPolicy()
 
 	policy.AllowLists()
@@ -58,7 +58,7 @@ func New_Moduler() *Moduler {
 	policy.AllowAttrs("value", "min", "max", "low", "high", "optimum").Matching(bluemonday.Number).OnElements("meter")
 	policy.AllowAttrs("value", "max").Matching(bluemonday.Number).OnElements("progress")
 
-	m := &Moduler{
+	m := &Module{
 		policy,
 		minify.New(),
 		New_JsonEncoder(),
@@ -68,15 +68,15 @@ func New_Moduler() *Moduler {
 	return m
 }
 
-func (o *Moduler) Sanitize(i *gofeed.Item) {
+func (o *Module) Sanitize(i *gofeed.Item) {
 	i.Content = o.sanitizer.Sanitize(i.Content)
 }
 
-func (o *Moduler) Minify(i *gofeed.Item) {
+func (o *Module) Minify(i *gofeed.Item) {
 	i.Content, _ = o.minifier.String("text/html", i.Content)
 }
 
-func (o *Moduler) Process(args string, i *gofeed.Item) error {
+func (o *Module) Process(args string, i *gofeed.Item) error {
 	o.enc.Encode(i)
 	var out bytes.Buffer
 	GUID := i.GUID

@@ -1,10 +1,5 @@
 package main
 
-/**
- * @website http://albulescu.ro
- * @author Cosmin Albulescu <cosmin@albulescu.ro>
- */
-
 import (
 	"bytes"
 	"fmt"
@@ -16,7 +11,25 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-func (s *Subscription) Process(mod *Moduler) error {
+type Subscription struct {
+	Id            int      `json:"-"`
+	Url           string   `json:"url"`
+	Title         string   `json:"title,omitempty"`
+	Modules       []string `json:"modules,omitempty"`
+	Last_GUID     uint     `json:"last_uuid,omitempty"`
+	Last_Mod_HTTP int64    `json:"last_modified,omitempty"`
+	Last_PackId   int      `json:"last_packid,omitempty"`
+	new_items     []*gofeed.Item
+}
+
+func (s Subscription) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Int("id", s.Id),
+		slog.String("url", s.Url),
+	)
+}
+
+func (s *Subscription) Process(mod *Module) error {
 	for _, i := range s.new_items {
 		for _, m := range s.Modules {
 			if err := mod.Process(m, i); err != nil {

@@ -1,134 +1,140 @@
 package main
 
 import (
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
-
-	"github.com/mmcdole/gofeed"
 )
 
 var db DB
 
 type DB struct {
-	SubIds        int                   `json:"subids"`
-	PackIds       int                   `json:"packids"`
-	Latest        bool                  `json:"latest"`
-	Subscriptions map[int]*Subscription `json:"subscriptions"`
-	packer        *Packer
-	enc           *JsonEncoder
-	path          string
-	mutex         sync.Mutex
+	SubIds int                      `json:"subids"`
+	TagIds int                      `json:"tagids"`
+	Tags   map[int]*SubscriptionTag `json:"tags"`
 }
 
-type Subscription struct {
-	Id            int      `json:"-"`
-	Url           string   `json:"url"`
-	Title         string   `json:"title,omitempty"`
-	Tag           string   `json:"tag,omitempty"`
-	Modules       []string `json:"modules,omitempty"`
-	Last_GUID     uint     `json:"last_uuid,omitempty"`
-	Last_Mod_HTTP int64    `json:"last_modified,omitempty"`
-	Last_PackId   int      `json:"last_packid,omitempty"`
-	new_items     []*gofeed.Item
-}
-
-func (s Subscription) LogValue() slog.Value {
-	return slog.GroupValue(
-		slog.Int("id", s.Id),
-		slog.String("url", s.Url),
-	)
-}
-
-type Item struct {
-	SubId     int    `json:"subId"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	Link      string `json:"link"`
-	Published int    `json:"published"`
-	Prev      int    `json:"prev,omitempty"`
-}
-
-func (db *DB) Store(sub *Subscription) {
-	if len(sub.new_items) == 0 {
-		return
+func (d *DB) Init() error {
+	if d.TagIds != 0 {
+		return nil
 	}
 
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
+	d.SubIds = 1
+	d.TagIds = 1
+	d.Tags = make(map[int]*SubscriptionTag)
 
-	if db.packer == nil {
-		db.packer = New_Packer(db.pack_latest_path())
-	}
-
-	for i := len(sub.new_items) - 1; i >= 0; i-- {
-		fItem := sub.new_items[i]
-		item := Item{
-			SubId:     sub.Id,
-			Title:     fItem.Title,
-			Content:   fItem.Content,
-			Link:      fItem.Link,
-			Published: int(fItem.PublishedParsed.Unix()),
+	path := d.path()
+	if _, err := os.Stat(path); err != nil {
+		if err = os.MkdirAll(globals.OutputPath, 0755); err != nil {
+			return fmt.Errorf(`unable to initialize output folder "%s". %v`, globals.OutputPath, err)
 		}
+	} else if fi, err := os.ReadFile(path); err != nil {
+		return fmt.Errorf(`unable to read db file "%s". Msg: %v`, path, err)
+	} else if err = json.Unmarshal(fi, d); err != nil {
+		return fmt.Errorf(`unable to parse db file "%s". Msg: %v`, path, err)
+	}
 
-		if db.packer.buffer.Len()+item.Size() >= (globals.PackageSize<<10)*7/2 {
-			db.packer.flush(db.pack_path())
-			db.PackIds++
+	for kT, vT := range d.Tags {
+		vT.Id = kT
+		for kS, vS := range vT.Subscriptions {
+			vS.Id = kS
 		}
-
-		if sub.Last_PackId != db.PackIds {
-			item.Prev = sub.Last_PackId
-			sub.Last_PackId = db.PackIds
-		}
-
-		data, _ := db.enc.Encode(item)
-		db.packer.buffer.Write(data)
-	}
-
-	sub.Last_GUID = hash(sub.new_items[0].GUID)
-}
-
-func (db *DB) Get_subs() (map[int]*Subscription, error) {
-	if err := db.Init(); err != nil {
-		return nil, err
-	}
-
-	return db.Subscriptions, nil
-}
-
-func (db *DB) Add_subs(subs ...*Subscription) error {
-	if err := db.Init(); err != nil {
-		return err
-	}
-
-	for _, s := range subs {
-		s.Last_PackId = -1
-		s.Id = db.SubIds
-
-		db.Subscriptions[s.Id] = s
-		db.SubIds++
 	}
 
 	return nil
 }
 
-func (db *DB) Rm_sub(ids ...int) error {
-	if err := db.Init(); err != nil {
+func (d *DB) Commit() error {
+	path := d.path()
+	enc := New_JsonEncoder()
+
+	var tmpFiles []string
+	for _, t := range d.Tags {
+		if tmp, err := t.Commit(); err != nil {
+			return err
+		} else if tmp != "" {
+			tmpFiles = append(tmpFiles, tmp)
+		}
+	}
+
+	tmp_db_file := path + ".tmp"
+	bytes, _ := enc.Encode(d)
+
+	if err := os.WriteFile(tmp_db_file, bytes, 0644); err != nil {
+		return fmt.Errorf(`unable to write tmp db file "%s". Msg: %v`, tmp_db_file, err)
+	} else if err = os.Rename(tmp_db_file, path); err != nil {
+		return fmt.Errorf(`unable to replace db file "%s" with "%s". Msg: %v`, path, tmp_db_file, err)
+	}
+
+	for _, i := range tmpFiles {
+		os.Remove(i)
+	}
+
+	return nil
+}
+
+func (d *DB) Add_sub(tagName string, sub *Subscription) error {
+	if err := d.Init(); err != nil {
+		return err
+	}
+
+	sub.Last_PackId = -1
+	sub.Id = d.SubIds
+	d.SubIds++
+
+	tag := d.Get_tag(tagName)
+	tag.Subscriptions[sub.Id] = sub
+
+	return nil
+}
+
+func (d *DB) Rm_subs(ids ...int) error {
+	if err := d.Init(); err != nil {
+		return err
+	}
+
+	for _, t := range d.Tags {
+		for _, id := range ids {
+			delete(t.Subscriptions, id)
+		}
+	}
+
+	return nil
+}
+
+func (d *DB) Rm_tags(ids ...int) error {
+	if err := d.Init(); err != nil {
 		return err
 	}
 
 	for _, id := range ids {
-		delete(db.Subscriptions, id)
+		delete(d.Tags, id)
 	}
 
 	return nil
 }
 
-func (db *DB) Erase() error {
+func (d *DB) Get_tag(name string) *SubscriptionTag {
+	for _, t := range d.Tags {
+		if t.Name == name {
+			return t
+		}
+	}
+
+	tag := &SubscriptionTag{
+		Id:            d.TagIds,
+		Name:          name,
+		PackIds:       1,
+		Subscriptions: make(map[int]*Subscription),
+	}
+	d.Tags[d.TagIds] = tag
+	d.TagIds++
+
+	return tag
+}
+
+func (d *DB) Erase() error {
 	_, err := os.Stat(globals.OutputPath)
 	if err != nil {
 		return nil
@@ -155,87 +161,30 @@ func (db *DB) Erase() error {
 	return nil
 }
 
-func (db *DB) Init() error {
-	if db.enc != nil {
-		return nil
+func (d *DB) path() string {
+	return filepath.Join(globals.OutputPath, "db.json")
+}
+
+type DBItPair struct {
+	Sub *Subscription
+	Tag *SubscriptionTag
+}
+
+func (d *DB) Iterate(ch chan DBItPair) error {
+	defer close(ch)
+
+	if err := d.Init(); err != nil {
+		return err
 	}
 
-	db.PackIds = 1
-	db.Subscriptions = make(map[int]*Subscription)
-	db.path = filepath.Join(globals.OutputPath, "db.json")
-	db.enc = New_JsonEncoder()
-
-	if _, err := os.Stat(db.path); err != nil {
-		if err = os.MkdirAll(globals.OutputPath, 0755); err != nil {
-			return fmt.Errorf(`unable to initialize output folder "%s". %v`, globals.OutputPath, err)
+	for _, t := range d.Tags {
+		for _, s := range t.Subscriptions {
+			ch <- DBItPair{
+				Tag: t,
+				Sub: s,
+			}
 		}
-	} else if fi, err := os.ReadFile(db.path); err != nil {
-		return fmt.Errorf(`unable to read db file "%s". Msg: %v`, db.path, err)
-	} else if err = json.Unmarshal(fi, db); err != nil {
-		return fmt.Errorf(`unable to parse db file "%s". Msg: %v`, db.path, err)
-	}
-
-	for k, v := range db.Subscriptions {
-		v.Id = k
 	}
 
 	return nil
-}
-
-func (db *DB) Commit() error {
-	if db.enc == nil {
-		return nil
-	}
-
-	var old_path string
-	if db.packer != nil {
-		old_path = db.pack_latest_path()
-		db.Latest = !db.Latest
-		db.packer.flush(db.pack_latest_path())
-	}
-
-	tmp_db_file := db.path + ".tmp"
-	bytes, _ := db.enc.Encode(db)
-
-	if err := os.WriteFile(tmp_db_file, bytes, 0644); err != nil {
-		return fmt.Errorf(`unable to write tmp db file "%s". Msg: %v`, tmp_db_file, err)
-	} else if err = os.Rename(tmp_db_file, db.path); err != nil {
-		return fmt.Errorf(`unable to replace db file "%s" with "%s". Msg: %v`, db.path, tmp_db_file, err)
-	}
-
-	if old_path != "" {
-		os.Remove(old_path)
-	}
-
-	return nil
-}
-
-func (p *Item) Size() int {
-	return len(p.Title) + len(p.Content) + len(p.Link) + 16
-}
-
-func (p *Packer) flush(path string) {
-	nf, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		fatal("Unable to open file.", "path", path, "err", err.Error())
-	}
-	defer nf.Close()
-
-	gw := gzip.NewWriter(nf)
-	if _, err = gw.Write(p.buffer.Bytes()); err != nil {
-		fatal("Unable to write file.", "path", path, "err", err.Error())
-	}
-	if err = gw.Close(); err != nil {
-		fatal("Unable to close file.", "path", path, "err", err.Error())
-	}
-
-	p.buffer.Reset()
-}
-
-func (db *DB) pack_latest_path() string {
-	return filepath.Join(globals.OutputPath, fmt.Sprintf("%v.gz", db.Latest))
-}
-
-func (db *DB) pack_path() string {
-	return filepath.Join(globals.OutputPath, fmt.Sprintf("%v.gz", db.PackIds))
 }
