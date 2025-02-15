@@ -32,4 +32,4 @@ jobs:
           AWS_DEFAULT_REGION: weur
         run: |
           cd packs
-          aws s3 cp --recursive . s3://srr
+          aws s3 cp --checksum-algorithm CRC32 --recursive . s3://srr
