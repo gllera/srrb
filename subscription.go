@@ -11,90 +11,95 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
+type SubscriptionLS struct {
+	Id      int64    `json:"id"                yaml:"id"`
+	Title   string   `json:"title"             yaml:"title"`
+	Url     string   `json:"url"               yaml:"url"`
+	Parsers []string `json:"parsers,omitempty" yaml:"parsers,omitempty"`
+}
+
 type Subscription struct {
-	Id            int      `json:"-"`
-	Url           string   `json:"url"`
-	Title         string   `json:"title,omitempty"`
-	Modules       []string `json:"modules,omitempty"`
-	Last_GUID     uint     `json:"last_uuid,omitempty"`
-	Last_Mod_HTTP int64    `json:"last_modified,omitempty"`
-	Last_PackId   int      `json:"last_packid,omitempty"`
-	new_items     []*gofeed.Item
+	id        int64
+	Url       string   `json:"url"`
+	Title     string   `json:"title,omitempty"`
+	Parsers   []string `json:"parsers,omitempty"`
+	GUID      uint     `json:"uuid,omitempty"`
+	PackId    int64    `json:"packid,omitempty"`
+	Error     string   `json:"error,omitempty"`
+	new_items []*gofeed.Item
 }
 
 func (s Subscription) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.Int("id", s.Id),
+		slog.Int64("id", s.id),
 		slog.String("url", s.Url),
 	)
 }
 
-func (s *Subscription) Process(mod *Module) error {
-	for _, i := range s.new_items {
-		for _, m := range s.Modules {
-			if err := mod.Process(m, i); err != nil {
-				return fmt.Errorf(`module "%s" failed (%v)`, m, err)
-			}
-		}
-		mod.Sanitize(i)
-		mod.Minify(i)
-	}
+func (s *Subscription) Fetch(buf []byte, mod *Module) error {
+	slog.Debug(`downloading subscription articles.`, "", s)
 
-	return nil
-}
-
-func (s *Subscription) Fetch(buf []byte) (int64, error) {
-	slog.Debug("Downloading subscription articles.", "", s)
-
+	last_fetch := time.Now().UTC()
 	client := http.Client{Timeout: 10 * time.Second}
 	res, err := client.Get(s.Url)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer res.Body.Close()
-
-	last_mod, ok := parseHTTPTime(res.Header.Get("Last-Modified"))
-	if !ok {
-		slog.Info(`Unable to parse subscription "Last-Modified" http header.`, "", s)
-	}
 
 	n, err := io.ReadFull(res.Body, buf)
 
 	switch err {
 	case io.ErrUnexpectedEOF:
 	case io.EOF:
-		return 0, fmt.Errorf("empty response")
+		return fmt.Errorf(`empty response from subscription`)
 	case nil:
-		return 0, fmt.Errorf(`subscription file bigger than %d bytes`, cap(buf)-1)
+		return fmt.Errorf(`subscription file bigger than %d bytes`, cap(buf)-1)
 	default:
-		return 0, err
+		return err
 	}
 
 	buf[n] = 0
 	reader := bytes.NewReader(buf[0 : n+1])
-
-	if feeds, err := gofeed.NewParser().Parse(reader); err != nil {
-		return 0, err
-	} else {
-		for _, i := range feeds.Items {
-			if s.Last_GUID == hash(i.GUID) {
-				break
-			}
-
-			if i.Published == "" {
-				now := time.Now().UTC()
-				i.Published = fmt.Sprintf("%d", now.Unix())
-				i.PublishedParsed = &now
-			}
-
-			if i.Content == "" {
-				i.Content = i.Description
-				i.Description = ""
-			}
-			i.Author = nil
-
-			s.new_items = append(s.new_items, i)
-		}
-		return last_mod, nil
+	feeds, err := gofeed.NewParser().Parse(reader)
+	if err != nil {
+		return err
 	}
+
+	s.new_items = make([]*gofeed.Item, 0, len(feeds.Items))
+	for _, i := range feeds.Items {
+		if s.GUID == hash(i.GUID) {
+			break
+		}
+
+		if i.Published == "" {
+			i.Published = fmt.Sprintf("%d", last_fetch.Unix())
+			i.PublishedParsed = &last_fetch
+		}
+
+		if i.Content == "" {
+			i.Content = i.Description
+			i.Description = ""
+		}
+		i.Author = nil
+
+		s.new_items = append(s.new_items, i)
+	}
+
+	// Process new items
+	for _, i := range s.new_items {
+		for _, m := range s.Parsers {
+			if err := mod.Process(m, i); err != nil {
+				return fmt.Errorf(`module "%s" failed. %v`, m, err)
+			}
+		}
+		mod.Sanitize(i)
+		mod.Minify(i)
+	}
+
+	if len(s.new_items) > 0 {
+		s.GUID = hash(s.new_items[0].GUID)
+	}
+
+	return nil
 }

@@ -1,190 +1,163 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
+	"net/url"
 )
 
-var db DB
-
-type DB struct {
-	SubIds int                      `json:"subids"`
-	TagIds int                      `json:"tagids"`
-	Tags   map[int]*SubscriptionTag `json:"tags"`
+type DB interface {
+	Get(key string, ignore_missing bool) ([]byte, error)
+	Put(key string, val []byte, ignore_existing bool) error
+	AtomicPut(key string, val []byte) error
+	Rm(key string) error
+	Mkdir() error
+	Core() *DB_core
 }
 
-func (d *DB) Init() error {
-	if d.TagIds != 0 {
+type DB_core struct {
+	Last_fetch    int64                   `json:"last_fetch,omitempty"`
+	SubIds        int64                   `json:"subids"`
+	PackIds       int64                   `json:"packids"`
+	Latest        bool                    `json:"latest"`
+	Subscriptions map[int64]*Subscription `json:"subscriptions"`
+
+	is_writable bool
+}
+
+func (d *DB_core) Core() *DB_core {
+	return d
+}
+
+func newDB_Core(is_writable bool) DB_core {
+	return DB_core{
+		SubIds:        1,
+		Subscriptions: make(map[int64]*Subscription),
+		is_writable:   is_writable,
+	}
+}
+
+func (d *DB_core) unmarshal(data []byte) error {
+	if len(data) == 0 {
 		return nil
 	}
 
-	d.SubIds = 1
-	d.TagIds = 1
-	d.Tags = make(map[int]*SubscriptionTag)
-
-	path := d.path()
-	if _, err := os.Stat(path); err != nil {
-		if err = os.MkdirAll(globals.OutputPath, 0755); err != nil {
-			return fmt.Errorf(`unable to initialize output folder "%s". %v`, globals.OutputPath, err)
-		}
-	} else if fi, err := os.ReadFile(path); err != nil {
-		return fmt.Errorf(`unable to read db file "%s". Msg: %v`, path, err)
-	} else if err = json.Unmarshal(fi, d); err != nil {
-		return fmt.Errorf(`unable to parse db file "%s". Msg: %v`, path, err)
+	var err error
+	if err = json.Unmarshal(data, d); err != nil {
+		return fmt.Errorf(`unable to parse db file. %v`, err)
 	}
 
-	for kT, vT := range d.Tags {
-		vT.Id = kT
-		for kS, vS := range vT.Subscriptions {
-			vS.Id = kS
-		}
+	for kS, vS := range d.Subscriptions {
+		vS.id = kS
 	}
 
 	return nil
 }
 
-func (d *DB) Commit() error {
-	path := d.path()
-	enc := New_JsonEncoder()
+func FlushBuffer(buffer *bytes.Buffer) []byte {
+	compresed := &bytes.Buffer{}
+	gw := gzip.NewWriter(compresed)
 
-	var tmpFiles []string
-	for _, t := range d.Tags {
-		if tmp, err := t.Commit(); err != nil {
+	gw.Write(buffer.Bytes())
+	gw.Close()
+
+	buffer.Reset()
+	return compresed.Bytes()
+}
+
+func PutArticles(db DB, articles []Article) error {
+	if len(articles) == 0 {
+		return nil
+	}
+	c := db.Core()
+
+	var buffer bytes.Buffer
+	if data, err := db.Get(fmt.Sprintf("%v.gz", c.Latest), true); err != nil {
+		return err
+	} else if len(data) == 0 {
+	} else if unziped, err := gzip.NewReader(bytes.NewReader(data)); err != nil {
+		return err
+	} else {
+		defer unziped.Close()
+		if _, err = io.Copy(&buffer, unziped); err != nil {
 			return err
-		} else if tmp != "" {
-			tmpFiles = append(tmpFiles, tmp)
 		}
 	}
 
-	tmp_db_file := path + ".tmp"
-	bytes, _ := enc.Encode(d)
-
-	if err := os.WriteFile(tmp_db_file, bytes, 0644); err != nil {
-		return fmt.Errorf(`unable to write tmp db file "%s". Msg: %v`, tmp_db_file, err)
-	} else if err = os.Rename(tmp_db_file, path); err != nil {
-		return fmt.Errorf(`unable to replace db file "%s" with "%s". Msg: %v`, path, tmp_db_file, err)
-	}
-
-	for _, i := range tmpFiles {
-		os.Remove(i)
-	}
-
-	return nil
-}
-
-func (d *DB) Add_sub(tagName string, sub *Subscription) error {
-	if err := d.Init(); err != nil {
-		return err
-	}
-
-	sub.Last_PackId = -1
-	sub.Id = d.SubIds
-	d.SubIds++
-
-	tag := d.Get_tag(tagName)
-	tag.Subscriptions[sub.Id] = sub
-
-	return nil
-}
-
-func (d *DB) Rm_subs(ids ...int) error {
-	if err := d.Init(); err != nil {
-		return err
-	}
-
-	for _, t := range d.Tags {
-		for _, id := range ids {
-			delete(t.Subscriptions, id)
-		}
-	}
-
-	return nil
-}
-
-func (d *DB) Rm_tags(ids ...int) error {
-	if err := d.Init(); err != nil {
-		return err
-	}
-
-	for _, id := range ids {
-		delete(d.Tags, id)
-	}
-
-	return nil
-}
-
-func (d *DB) Get_tag(name string) *SubscriptionTag {
-	for _, t := range d.Tags {
-		if t.Name == name {
-			return t
-		}
-	}
-
-	tag := &SubscriptionTag{
-		Id:            d.TagIds,
-		Name:          name,
-		PackIds:       1,
-		Subscriptions: make(map[int]*Subscription),
-	}
-	d.Tags[d.TagIds] = tag
-	d.TagIds++
-
-	return tag
-}
-
-func (d *DB) Erase() error {
-	_, err := os.Stat(globals.OutputPath)
-	if err != nil {
-		return nil
-	}
-
-	dir, err := os.Open(globals.OutputPath)
-	if err != nil {
-		return fmt.Errorf(`unable to open debug folder "%s". %v`, globals.OutputPath, err)
-	}
-	defer dir.Close()
-
-	names, err := dir.Readdirnames(-1)
-	if err != nil {
-		return fmt.Errorf(`unable to read debug folder "%s". %v`, globals.OutputPath, err)
-	}
-
-	for _, name := range names {
-		full_name := filepath.Join(globals.OutputPath, name)
-		if err = os.RemoveAll(full_name); err != nil {
-			return fmt.Errorf(`unable to remove content "%s" inside debug folder "%s". %v`, globals.OutputPath, full_name, err)
-		}
-	}
-
-	return nil
-}
-
-func (d *DB) path() string {
-	return filepath.Join(globals.OutputPath, "db.json")
-}
-
-type DBItPair struct {
-	Sub *Subscription
-	Tag *SubscriptionTag
-}
-
-func (d *DB) Iterate(ch chan DBItPair) error {
-	defer close(ch)
-
-	if err := d.Init(); err != nil {
-		return err
-	}
-
-	for _, t := range d.Tags {
-		for _, s := range t.Subscriptions {
-			ch <- DBItPair{
-				Tag: t,
-				Sub: s,
+	jsonEncoder := New_JsonEncoder()
+	for _, item := range articles {
+		if buffer.Len()+item.Size() >= (globals.PackageSize<<10)*7/2 {
+			c.PackIds++
+			if err := db.Put(fmt.Sprintf("%d.gz", c.PackIds), FlushBuffer(&buffer), true); err != nil {
+				return err
 			}
 		}
+
+		sub := c.Subscriptions[item.SubId]
+		if sub.PackId != c.PackIds {
+			item.Prev = sub.PackId
+			sub.PackId = c.PackIds
+		}
+
+		data, _ := jsonEncoder.Encode(item)
+		buffer.Write(data)
+	}
+
+	if len(articles) > 0 {
+		c.Latest = !c.Latest
+		if err := db.Put(fmt.Sprintf("%v.gz", c.Latest), FlushBuffer(&buffer), true); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+func UnlockDB(db DB) {
+	db.Rm(".locked")
+}
+
+func CommitDB(db DB) error {
+	data, _ := New_JsonEncoder().Encode(db.Core())
+	return db.AtomicPut("db.json", data)
+}
+
+func NewDB(is_writable bool) (DB, *DB_core, error) {
+	u, err := url.Parse(globals.OutputPath)
+	if err != nil {
+		panic(err)
+	}
+
+	var db DB
+	var c *DB_core
+	switch u.Scheme {
+	case "":
+		db, c, err = NewDB_Local(u, is_writable)
+	case "s3":
+		db, c, err = NewDB_S3(u, is_writable)
+	default:
+		err = fmt.Errorf(`unsupported output URL scheme %s`, u.Scheme)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if is_writable {
+		if err = db.Mkdir(); err != nil {
+			return nil, nil, err
+		} else if err = db.Put(".locked", []byte{}, globals.Force); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if data, err := db.Get("db.json", true); err != nil {
+		return nil, nil, err
+	} else if err = c.unmarshal(data); err != nil {
+		return nil, nil, err
+	}
+
+	return db, c, nil
 }

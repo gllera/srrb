@@ -99,7 +99,7 @@ func (o *Module) Process(args string, i *gofeed.Item) error {
 	}
 
 	if GUID != i.GUID {
-		return fmt.Errorf("field GUID can not be updated")
+		return fmt.Errorf(`field GUID can not be updated`)
 	}
 
 	return nil
