@@ -9,22 +9,23 @@ import (
 
 var httpTimeFormats = []string{
 	"Mon, _2 Jan 2006 15:04:05 GMT",
+	"Jan _2, 2006 15:04 GMT",
 	time.RFC850,
 	time.ANSIC,
 }
 
-func parseHTTPTime(text string) (int64, bool) {
+func parseHTTPTime(text string) time.Time {
 	if text == "" {
-		return 0, true
+		return time.Now().UTC()
 	}
 
 	for _, layout := range httpTimeFormats {
 		if t, err := time.Parse(layout, text); err == nil {
-			return t.Unix(), true
+			return t.UTC()
 		}
 	}
 
-	return 0, false
+	return time.Now().UTC()
 }
 
 func hash(s string) uint {

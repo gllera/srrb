@@ -39,15 +39,23 @@ func (s Subscription) LogValue() slog.Value {
 func (s *Subscription) Fetch(buf []byte, mod *Module) error {
 	slog.Debug(`downloading subscription articles.`, "", s)
 
-	last_fetch := time.Now().UTC()
-	client := http.Client{Timeout: 10 * time.Second}
-	res, err := client.Get(s.Url)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequest("GET", s.Url, nil)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	req.Header.Set("User-Agent", "SRRB/0.1")
+
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
 
 	n, err := io.ReadFull(res.Body, buf)
+	res.Body.Close()
 
 	switch err {
 	case io.ErrUnexpectedEOF:
@@ -72,9 +80,12 @@ func (s *Subscription) Fetch(buf []byte, mod *Module) error {
 			break
 		}
 
-		if i.Published == "" {
-			i.Published = fmt.Sprintf("%d", last_fetch.Unix())
-			i.PublishedParsed = &last_fetch
+		if i.PublishedParsed == nil {
+			t := parseHTTPTime(i.Published)
+			i.PublishedParsed = &t
+		} else {
+			t := i.PublishedParsed.UTC()
+			i.PublishedParsed = &t
 		}
 
 		if i.Content == "" {
