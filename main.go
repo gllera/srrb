@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
+	"runtime"
 
 	"github.com/alecthomas/kong"
 	kongyaml "github.com/alecthomas/kong-yaml"
@@ -15,17 +17,21 @@ func main() {
 	globals = &cli.Globals
 
 	ctx := kong.Parse(&cli,
+		kong.Vars{
+			"nproc": fmt.Sprint(runtime.NumCPU()),
+		},
 		kong.Name("srr"),
 		kong.Description("Static RSS Reader backend."),
 		kong.Configuration(kongyaml.Loader, "config.yaml"),
 		kong.ShortUsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{
-			Compact:   true,
-			FlagsLast: true,
+			Compact:             true,
+			FlagsLast:           true,
+			NoExpandSubcommands: true,
 		}),
 	)
 
-	if cli.Debug {
+	if globals.Debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 

@@ -19,13 +19,20 @@ type DB interface {
 }
 
 type DB_core struct {
-	Last_fetch    int64                   `json:"last_fetch,omitempty"`
-	SubIds        int64                   `json:"subids"`
-	PackIds       int64                   `json:"packids"`
-	Latest        bool                    `json:"latest"`
-	Subscriptions map[int64]*Subscription `json:"subscriptions"`
+	Latest     bool            `json:"latest"`
+	N_Packs    int64           `json:"n_packs"`
+	N_Subs     int64           `json:"n_subs"`
+	N_Exts     int64           `json:"n_exts"`
+	Subs       []*Subscription `json:"subs"`
+	Exts       []*Extern       `json:"exts"`
+	Last_fetch int64           `json:"last_fetch,omitempty"`
 
 	is_writable bool
+}
+
+type Extern struct {
+	Name string `json:"name"`
+	Url  string `json:"url"`
 }
 
 func (d *DB_core) Core() *DB_core {
@@ -34,9 +41,9 @@ func (d *DB_core) Core() *DB_core {
 
 func newDB_Core(is_writable bool) DB_core {
 	return DB_core{
-		SubIds:        1,
-		Subscriptions: make(map[int64]*Subscription),
-		is_writable:   is_writable,
+		N_Subs:      1,
+		N_Exts:      1,
+		is_writable: is_writable,
 	}
 }
 
@@ -50,7 +57,7 @@ func (d *DB_core) unmarshal(data []byte) error {
 		return fmt.Errorf(`unable to parse db file. %v`, err)
 	}
 
-	for kS, vS := range d.Subscriptions {
+	for kS, vS := range d.Subs {
 		vS.id = kS
 	}
 
@@ -90,16 +97,16 @@ func PutArticles(db DB, articles []Article) error {
 	jsonEncoder := New_JsonEncoder()
 	for _, item := range articles {
 		if buffer.Len()+item.Size() >= (globals.PackageSize<<10)*7/2 {
-			c.PackIds++
-			if err := db.Put(fmt.Sprintf("%d.gz", c.PackIds), FlushBuffer(&buffer), true); err != nil {
+			c.N_Packs++
+			if err := db.Put(fmt.Sprintf("%d.gz", c.N_Packs), FlushBuffer(&buffer), true); err != nil {
 				return err
 			}
 		}
 
-		sub := c.Subscriptions[item.SubId]
-		if sub.PackId != c.PackIds {
+		sub := c.Subs[item.SubId]
+		if sub.PackId != c.N_Packs {
 			item.Prev = sub.PackId
-			sub.PackId = c.PackIds
+			sub.PackId = c.N_Packs
 		}
 
 		data, _ := jsonEncoder.Encode(item)

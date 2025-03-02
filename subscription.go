@@ -11,15 +11,8 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-type SubscriptionLS struct {
-	Id      int64    `json:"id"                yaml:"id"`
-	Title   string   `json:"title"             yaml:"title"`
-	Url     string   `json:"url"               yaml:"url"`
-	Parsers []string `json:"parsers,omitempty" yaml:"parsers,omitempty"`
-}
-
 type Subscription struct {
-	id        int64
+	Id        int64    `json:"id"`
 	Url       string   `json:"url"`
 	Title     string   `json:"title,omitempty"`
 	Parsers   []string `json:"parsers,omitempty"`
