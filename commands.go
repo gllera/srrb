@@ -103,8 +103,10 @@ func (o *ImportCmd) Run() error {
 		defer UnlockDB(db)
 
 		for _, s := range newSubs {
-			c.Subs[c.N_Subs] = s
+			s.PackId = -1
+			s.Id = c.N_Subs
 			c.N_Subs++
+			c.Subs = append(c.Subs, s)
 		}
 
 		return CommitDB(db)

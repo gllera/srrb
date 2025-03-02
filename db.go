@@ -20,11 +20,11 @@ type DB interface {
 
 type DB_core struct {
 	Latest     bool            `json:"latest"`
-	N_Packs    int64           `json:"n_packs"`
-	N_Subs     int64           `json:"n_subs"`
-	N_Exts     int64           `json:"n_exts"`
+	N_Packs    int             `json:"n_packs"`
+	N_Subs     int             `json:"n_subs"`
+	N_Exts     int             `json:"n_exts"`
 	Subs       []*Subscription `json:"subs"`
-	Exts       []*Extern       `json:"exts"`
+	Exts       []*Extern       `json:"exts,omitempty"`
 	Last_fetch int64           `json:"last_fetch,omitempty"`
 
 	is_writable bool
@@ -33,6 +33,7 @@ type DB_core struct {
 type Extern struct {
 	Name string `json:"name"`
 	Url  string `json:"url"`
+	Id   int    `json:"id"`
 }
 
 func (d *DB_core) Core() *DB_core {
@@ -55,10 +56,6 @@ func (d *DB_core) unmarshal(data []byte) error {
 	var err error
 	if err = json.Unmarshal(data, d); err != nil {
 		return fmt.Errorf(`unable to parse db file. %v`, err)
-	}
-
-	for kS, vS := range d.Subs {
-		vS.id = kS
 	}
 
 	return nil
@@ -94,6 +91,11 @@ func PutArticles(db DB, articles []Article) error {
 		}
 	}
 
+	subs := make(map[int]*Subscription)
+	for _, sub := range c.Subs {
+		subs[sub.Id] = sub
+	}
+
 	jsonEncoder := New_JsonEncoder()
 	for _, item := range articles {
 		if buffer.Len()+item.Size() >= (globals.PackageSize<<10)*7/2 {
@@ -103,7 +105,7 @@ func PutArticles(db DB, articles []Article) error {
 			}
 		}
 
-		sub := c.Subs[item.SubId]
+		sub := subs[item.SubId]
 		if sub.PackId != c.N_Packs {
 			item.Prev = sub.PackId
 			sub.PackId = c.N_Packs

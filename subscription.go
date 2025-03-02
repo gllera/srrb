@@ -12,19 +12,19 @@ import (
 )
 
 type Subscription struct {
-	Id        int64    `json:"id"`
+	Title     string   `json:"title"`
 	Url       string   `json:"url"`
-	Title     string   `json:"title,omitempty"`
 	Parsers   []string `json:"parsers,omitempty"`
-	GUID      uint     `json:"uuid,omitempty"`
-	PackId    int64    `json:"packid,omitempty"`
 	Error     string   `json:"error,omitempty"`
+	GUID      uint     `json:"uuid,omitempty"`
+	PackId    int      `json:"packid"`
+	Id        int      `json:"id"`
 	new_items []*gofeed.Item
 }
 
 func (s Subscription) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.Int64("id", s.id),
+		slog.Int("id", s.Id),
 		slog.String("url", s.Url),
 	)
 }
@@ -40,7 +40,7 @@ func (s *Subscription) Fetch(buf []byte, mod *Module) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "SRRB/0.1")
+	req.Header.Set("User-Agent", "SRRB/"+version)
 
 	res, err := client.Do(req)
 	if err != nil {
