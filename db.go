@@ -1,179 +1,173 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
-
-	"github.com/mmcdole/gofeed"
+	"io"
+	"net/url"
 )
 
-type Item struct {
-	GUID      string `json:"-"`
-	SubId     int64  `json:"subId"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	Link      string `json:"link"`
-	Published int64  `json:"published"`
-	Prev      int64  `json:"prev,omitempty"`
+type DB interface {
+	Get(key string, ignore_missing bool) ([]byte, error)
+	Put(key string, val []byte, ignore_existing bool) error
+	AtomicPut(key string, val []byte) error
+	Rm(key string) error
+	Mkdir() error
+	Core() *DB_core
 }
 
-type Subscription struct {
-	Id            int64    `json:"-"`
-	Url           string   `json:"url"`
-	Title         string   `json:"title,omitempty"`
-	Tag           string   `json:"tag,omitempty"`
-	Modules       []string `json:"modules,omitempty"`
-	Last_GUID     string   `json:"last_uuid,omitempty"`
-	Last_Mod_HTTP string   `json:"last_modified,omitempty"`
-	Last_PackId   int64    `json:"last_packid,omitempty"`
-	new_items     []*gofeed.Item
+type DB_core struct {
+	Latest     bool            `json:"latest"`
+	N_Packs    int             `json:"n_packs"`
+	N_Subs     int             `json:"n_subs"`
+	N_Exts     int             `json:"n_exts"`
+	Subs       []*Subscription `json:"subs"`
+	Exts       []*Extern       `json:"exts,omitempty"`
+	Last_fetch int64           `json:"last_fetch,omitempty"`
+
+	is_writable bool
 }
 
-type DB struct {
-	SubIds        int64                   `json:"subids"`
-	PackIds       int64                   `json:"packids"`
-	Latest        bool                    `json:"latest"`
-	Subscriptions map[int64]*Subscription `json:"subscriptions"`
-	packer        *Packer
-	enc           *JsonEncoder
-	path          string
-	mutex         sync.Mutex
+type Extern struct {
+	Name string `json:"name"`
+	Url  string `json:"url"`
+	Id   int    `json:"id"`
 }
 
-func New_DB() *DB {
-	db := &DB{
-		path: filepath.Join(output_folder, "db.json"),
-		enc:  New_JsonEncoder(),
+func (d *DB_core) Core() *DB_core {
+	return d
+}
+
+func newDB_Core(is_writable bool) DB_core {
+	return DB_core{
+		N_Subs:      1,
+		N_Exts:      1,
+		N_Packs:     1,
+		is_writable: is_writable,
+	}
+}
+
+func (d *DB_core) unmarshal(data []byte) error {
+	if len(data) == 0 {
+		return nil
 	}
 
-	if _, err := os.Stat(db.path); err != nil {
-		if err = os.MkdirAll(output_folder, 0755); err != nil {
-			fatal(fmt.Sprintf(`Unable to initialize db file "%s". %v`, config_file, err))
-		}
+	var err error
+	if err = json.Unmarshal(data, d); err != nil {
+		return fmt.Errorf(`unable to parse db file. %v`, err)
+	}
 
-		db.Subscriptions = make(map[int64]*Subscription)
-		db.PackIds = 1
-		db.Commit()
+	return nil
+}
+
+func FlushBuffer(buffer *bytes.Buffer) []byte {
+	compresed := &bytes.Buffer{}
+	gw := gzip.NewWriter(compresed)
+
+	gw.Write(buffer.Bytes())
+	gw.Close()
+
+	buffer.Reset()
+	return compresed.Bytes()
+}
+
+func PutArticles(db DB, articles []Article) error {
+	if len(articles) == 0 {
+		return nil
+	}
+	c := db.Core()
+
+	var buffer bytes.Buffer
+	if data, err := db.Get(fmt.Sprintf("%v.gz", c.Latest), true); err != nil {
+		return err
+	} else if len(data) == 0 {
+	} else if unziped, err := gzip.NewReader(bytes.NewReader(data)); err != nil {
+		return err
 	} else {
-		if fi, err := os.ReadFile(db.path); err != nil {
-			fatal(fmt.Sprintf(`Unable to read db file "%s". Msg: %v`, db.path, err))
-		} else if err = json.Unmarshal(fi, db); err != nil {
-			fatal(fmt.Sprintf(`Unable to parse db file "%s". Msg: %v`, db.path, err))
-		}
-
-		for k, v := range db.Subscriptions {
-			v.Id = k
+		defer unziped.Close()
+		if _, err = io.Copy(&buffer, unziped); err != nil {
+			return err
 		}
 	}
 
-	return db
-}
-
-func (db *DB) Store(sub *Subscription) {
-	if len(sub.new_items) == 0 {
-		return
+	subs := make(map[int]*Subscription)
+	for _, sub := range c.Subs {
+		subs[sub.Id] = sub
 	}
 
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	if db.packer == nil {
-		db.packer = New_Packer(db.pack_latest_path())
-	}
-
-	for i := len(sub.new_items) - 1; i >= 0; i-- {
-		fItem := sub.new_items[i]
-		item := Item{
-			GUID:      fItem.GUID,
-			SubId:     sub.Id,
-			Title:     fItem.Title,
-			Content:   fItem.Content,
-			Link:      fItem.Link,
-			Published: fItem.PublishedParsed.Unix(),
+	jsonEncoder := New_JsonEncoder()
+	for _, item := range articles {
+		if buffer.Len()+item.Size() >= (globals.PackageSize<<10)*7/2 {
+			c.N_Packs++
+			if err := db.Put(fmt.Sprintf("%d.gz", c.N_Packs), FlushBuffer(&buffer), true); err != nil {
+				return err
+			}
 		}
 
-		if db.packer.buffer.Len()+item.Size() >= (package_size<<10)*7/2 {
-			db.packer.flush(db.pack_path())
-			db.PackIds++
+		sub := subs[item.SubId]
+		if sub.PackId != c.N_Packs {
+			item.Prev = sub.PackId
+			sub.PackId = c.N_Packs
 		}
 
-		if sub.Last_PackId != db.PackIds {
-			item.Prev = sub.Last_PackId
-			sub.Last_PackId = db.PackIds
+		data, _ := jsonEncoder.Encode(item)
+		buffer.Write(data)
+	}
+
+	if len(articles) > 0 {
+		c.Latest = !c.Latest
+		if err := db.Put(fmt.Sprintf("%v.gz", c.Latest), FlushBuffer(&buffer), true); err != nil {
+			return err
 		}
-
-		data, _ := db.enc.Encode(item)
-		db.packer.buffer.Write(data)
 	}
 
-	sub.Last_GUID = sub.new_items[0].GUID
+	return nil
 }
 
-func (db *DB) Add_sub(s *Subscription) {
-	s.Last_PackId = -1
-	s.Id = db.SubIds
-
-	db.Subscriptions[s.Id] = s
-	db.SubIds++
+func UnlockDB(db DB) {
+	db.Rm(".locked")
 }
 
-func (db *DB) Rm_sub(id int64) {
-	delete(db.Subscriptions, id)
+func CommitDB(db DB) error {
+	data, _ := New_JsonEncoder().Encode(db.Core())
+	return db.AtomicPut("db.json", data)
 }
 
-func (db *DB) Commit() {
-	var old_path string
-
-	if db.packer != nil {
-		old_path = db.pack_latest_path()
-		db.Latest = !db.Latest
-		db.packer.flush(db.pack_latest_path())
-	}
-
-	tmp_db_file := db.path + ".tmp"
-	bytes, _ := db.enc.Encode(db)
-
-	if err := os.WriteFile(tmp_db_file, bytes, 0644); err != nil {
-		fatal(fmt.Sprintf(`Unable to write tmp db file "%s". Msg: %v`, tmp_db_file, err))
-	} else if err = os.Rename(tmp_db_file, db.path); err != nil {
-		fatal(fmt.Sprintf(`Unable to replace db file "%s" with "%s". Msg: %v`, db.path, tmp_db_file, err))
-	}
-
-	if old_path != "" {
-		os.Remove(old_path)
-	}
-}
-
-func (p *Item) Size() int {
-	return len(p.Title) + len(p.Content) + len(p.Link) + 16
-}
-
-func (p *Packer) flush(path string) {
-	nf, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+func NewDB(is_writable bool) (DB, *DB_core, error) {
+	u, err := url.Parse(globals.OutputPath)
 	if err != nil {
-		fatal(err)
-	}
-	defer nf.Close()
-
-	gw := gzip.NewWriter(nf)
-	if _, err = gw.Write(p.buffer.Bytes()); err != nil {
-		fatal(err)
-	}
-	if err = gw.Close(); err != nil {
-		fatal(err)
+		panic(err)
 	}
 
-	p.buffer.Reset()
-}
+	var db DB
+	var c *DB_core
+	switch u.Scheme {
+	case "":
+		db, c, err = NewDB_Local(u, is_writable)
+	case "s3":
+		db, c, err = NewDB_S3(u, is_writable)
+	default:
+		err = fmt.Errorf(`unsupported output URL scheme %s`, u.Scheme)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
 
-func (db *DB) pack_latest_path() string {
-	return filepath.Join(output_folder, fmt.Sprintf("%v.gz", db.Latest))
-}
+	if is_writable {
+		if err = db.Mkdir(); err != nil {
+			return nil, nil, err
+		} else if err = db.Put(".locked", []byte{}, globals.Force); err != nil {
+			return nil, nil, err
+		}
+	}
 
-func (db *DB) pack_path() string {
-	return filepath.Join(output_folder, fmt.Sprintf("%v.gz", db.PackIds))
+	if data, err := db.Get("db.json", true); err != nil {
+		return nil, nil, err
+	} else if err = c.unmarshal(data); err != nil {
+		return nil, nil, err
+	}
+
+	return db, c, nil
 }
