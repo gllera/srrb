@@ -1,8 +1,7 @@
 module github.com/gllera/srrb
 
 go 1.23
-
-toolchain go1.24.0
+toolchain go1.24.1
 
 require (
 	github.com/alecthomas/kong v1.8.1
@@ -43,6 +42,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/tdewolff/parse v2.3.4+incompatible // indirect
 	github.com/tdewolff/test v1.0.10 // indirect
-	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 )
