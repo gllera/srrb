@@ -64,7 +64,7 @@ func (d *DB_S3) Get(key string, ignore_missing bool) ([]byte, error) {
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf(`error while comunicating with S3. %v`, apiErr)
+		return nil, fmt.Errorf(`error while communicating with S3. %v`, apiErr)
 	}
 
 	buf := new(bytes.Buffer)
@@ -102,7 +102,7 @@ func (d *DB_S3) Put(key string, val []byte, ignore_existing bool) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf(`error while comunicating with S3. %v`, err)
+		return fmt.Errorf(`error while communicating with S3. %v`, err)
 	}
 
 	return nil
