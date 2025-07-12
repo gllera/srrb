@@ -85,7 +85,7 @@ func (o *Module) Process(args string, i *gofeed.Item) error {
 	cmd.Stdin = &o.enc.buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(cmd.Env,
+	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("SRR_OUTPUT_PATH=%s", globals.OutputPath),
 		fmt.Sprintf("SRR_MAX_DOWNLOAD=%d", globals.MaxDownload),
 	)

@@ -16,7 +16,7 @@ type Subscription struct {
 	Url       string   `json:"url"`
 	Parsers   []string `json:"parsers,omitempty"`
 	Error     string   `json:"error,omitempty"`
-	GUID      uint     `json:"uuid,omitempty"`
+	Last_GUID uint     `json:"last_guid,omitempty"`
 	PackId    int      `json:"packid"`
 	Id        int      `json:"id"`
 	new_items []*gofeed.Item
@@ -69,7 +69,7 @@ func (s *Subscription) Fetch(buf []byte, mod *Module) error {
 
 	s.new_items = make([]*gofeed.Item, 0, len(feeds.Items))
 	for _, i := range feeds.Items {
-		if s.GUID == hash(i.GUID) {
+		if s.Last_GUID == hash(i.GUID) {
 			break
 		}
 
@@ -102,7 +102,7 @@ func (s *Subscription) Fetch(buf []byte, mod *Module) error {
 	}
 
 	if len(s.new_items) > 0 {
-		s.GUID = hash(s.new_items[0].GUID)
+		s.Last_GUID = hash(s.new_items[0].GUID)
 	}
 
 	return nil
