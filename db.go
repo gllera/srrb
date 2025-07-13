@@ -62,17 +62,6 @@ func (d *DB_core) unmarshal(data []byte) error {
 	return nil
 }
 
-func FlushBuffer(buffer *bytes.Buffer) []byte {
-	compresed := &bytes.Buffer{}
-	gw := gzip.NewWriter(compresed)
-
-	gw.Write(buffer.Bytes())
-	gw.Close()
-
-	buffer.Reset()
-	return compresed.Bytes()
-}
-
 func PutArticles(db DB, articles []Article) error {
 	if len(articles) == 0 {
 		return nil
@@ -80,32 +69,37 @@ func PutArticles(db DB, articles []Article) error {
 	c := db.Core()
 
 	var buffer bytes.Buffer
-	if data, err := db.Get(fmt.Sprintf("%v.gz", c.Latest), true); err != nil {
+	gz := gzip.NewWriter(&buffer)
+	defer gz.Close()
+
+	// Read the latest pack to get the current fetch state
+	data, err := db.Get(fmt.Sprintf("%v.gz", c.Latest), true)
+	if err != nil {
 		return err
-	} else if len(data) == 0 {
-	} else if unziped, err := gzip.NewReader(bytes.NewReader(data)); err != nil {
-		return err
-	} else {
+	}
+
+	if len(data) != 0 {
+		unziped, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return err
+		}
 		defer unziped.Close()
-		if _, err = io.Copy(&buffer, unziped); err != nil {
+
+		_, err = io.Copy(gz, unziped)
+		if err != nil {
 			return err
 		}
 	}
 
+	// Create subscriptions map
 	subs := make(map[int]*Subscription)
 	for _, sub := range c.Subs {
 		subs[sub.Id] = sub
 	}
 
+	// Save articles
 	jsonEncoder := New_JsonEncoder()
 	for _, item := range articles {
-		if buffer.Len()+item.Size() >= (globals.PackageSize<<10)*7/2 {
-			c.N_Packs++
-			if err := db.Put(fmt.Sprintf("%d.gz", c.N_Packs), FlushBuffer(&buffer), true); err != nil {
-				return err
-			}
-		}
-
 		sub := subs[item.SubId]
 		if sub.PackId != c.N_Packs {
 			item.Prev = sub.PackId
@@ -113,16 +107,31 @@ func PutArticles(db DB, articles []Article) error {
 		}
 
 		data, _ := jsonEncoder.Encode(item)
-		buffer.Write(data)
-	}
+		gz.Write(data)
+		gz.Flush()
 
-	if len(articles) > 0 {
-		c.Latest = !c.Latest
-		if err := db.Put(fmt.Sprintf("%v.gz", c.Latest), FlushBuffer(&buffer), true); err != nil {
-			return err
+		if buffer.Len() >= (globals.PackageSize << 10) {
+			save(fmt.Sprintf("%d.gz", c.N_Packs), gz, db, &buffer)
+			c.N_Packs++
 		}
 	}
 
+	// Save remaining articles without final pack
+	if len(articles) > 0 {
+		c.Latest = !c.Latest
+		save(fmt.Sprintf("%v.gz", c.Latest), gz, db, &buffer)
+	}
+
+	return nil
+}
+
+func save(name string, gz *gzip.Writer, db DB, buffer *bytes.Buffer) error {
+	gz.Close()
+	if err := db.Put(name, buffer.Bytes(), true); err != nil {
+		return err
+	}
+	buffer.Reset()
+	gz.Reset(buffer)
 	return nil
 }
 

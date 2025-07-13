@@ -47,6 +47,11 @@ func (s *Subscription) Fetch(buf []byte, mod *Module) error {
 		return err
 	}
 
+	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
+		return fmt.Errorf("unexpected HTTP status: %s", res.Status)
+	}
+
 	n, err := io.ReadFull(res.Body, buf)
 	res.Body.Close()
 
