@@ -20,6 +20,14 @@ type Outline struct {
 	Outlines []Outline `xml:"outline"`
 }
 
+func outlineToSub(o Outline) *Subscription {
+	u, err := url.Parse(o.XMLURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	return &Subscription{Title: o.Title, URL: o.XMLURL}
+}
+
 func ParseOPML(file string) (map[string][]*Subscription, error) {
 	mapping := make(map[string][]*Subscription)
 
@@ -30,32 +38,19 @@ func ParseOPML(file string) (map[string][]*Subscription, error) {
 		return nil, err
 	}
 
-	subs := make([]*Subscription, 0)
+	// Collect top-level feeds (no group)
 	for _, i := range root.Body.Outlines {
-		if u, err := url.Parse(i.XMLURL); err == nil && u.Scheme != "" && u.Host != "" {
-			subs = append(subs, &Subscription{
-				Title: i.Title,
-				Url:   i.XMLURL,
-			})
+		if s := outlineToSub(i); s != nil {
+			mapping[""] = append(mapping[""], s)
 		}
 	}
-	if len(subs) > 0 {
-		mapping[""] = subs
-	}
 
+	// Collect grouped feeds
 	for _, i := range root.Body.Outlines {
-		subs := make([]*Subscription, 0)
 		for _, j := range i.Outlines {
-			if u, err := url.Parse(j.XMLURL); err == nil && u.Scheme != "" && u.Host != "" {
-				subs = append(subs, &Subscription{
-					Title: j.Title,
-					Url:   j.XMLURL,
-				})
+			if s := outlineToSub(j); s != nil {
+				mapping[i.Title] = append(mapping[i.Title], s)
 			}
-		}
-
-		if len(subs) > 0 {
-			mapping[i.Title] = subs
 		}
 	}
 
