@@ -86,9 +86,7 @@ func (o *ImportCmd) Run() error {
 
 		for _, s := range newSubs {
 			s.PackID = -1
-			s.ID = db.core.NSubs
-			db.core.NSubs++
-			db.core.Subs = append(db.core.Subs, s)
+			db.AddSubscription(s)
 		}
 
 		return db.Commit(ctx)

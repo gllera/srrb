@@ -19,7 +19,8 @@ type Subscription struct {
 	LastGUID     uint32   `json:"last_guid,omitempty"`
 	ETag         string   `json:"etag,omitempty"`
 	LastModified string   `json:"last_modified,omitempty"`
-	PackID       int      `json:"packid"`
+	NArticles    int      `json:"n_articles"`
+	PackID       int      `json:"pack_id"`
 	ID           int      `json:"id"`
 	newItems     []*Item
 }

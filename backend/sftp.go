@@ -138,13 +138,16 @@ func (d *SFTP) AtomicPut(_ context.Context, key string, val []byte) error {
 	if err != nil {
 		return fmt.Errorf("opening file %s: %w", tmpFile, err)
 	}
-	defer fs.Close()
 
 	if _, err := fs.Write(val); err != nil {
+		fs.Close()
 		return fmt.Errorf("writing file %s: %w", tmpFile, err)
 	}
+	if err := fs.Close(); err != nil {
+		return fmt.Errorf("closing file %s: %w", tmpFile, err)
+	}
 
-	if err := d.client.Rename(tmpFile, file); err != nil {
+	if err := d.client.PosixRename(tmpFile, file); err != nil {
 		return fmt.Errorf("renaming %s to %s: %w", tmpFile, file, err)
 	}
 	return nil

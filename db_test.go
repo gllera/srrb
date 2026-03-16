@@ -33,7 +33,7 @@ func setupTestDB(t *testing.T) (*DB, *DBCore, string) {
 	return db, &db.core, dir
 }
 
-func readArticlesFromGz(t *testing.T, path string) []*Item {
+func decompressGz(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -49,13 +49,28 @@ func readArticlesFromGz(t *testing.T, path string) []*Item {
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
+	return content
+}
 
+func readArticlesFromGz(t *testing.T, path string) []*Item {
+	t.Helper()
 	var articles []*Item
-	dec := json.NewDecoder(bytes.NewReader(content))
+	dec := json.NewDecoder(bytes.NewReader(decompressGz(t, path)))
 	for dec.More() {
-		var a *Item
-		if err := dec.Decode(&a); err != nil {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
 			t.Fatalf("Decode: %v", err)
+		}
+		var probe map[string]any
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			t.Fatalf("Unmarshal probe: %v", err)
+		}
+		if _, ok := probe["ts"]; ok {
+			continue
+		}
+		var a *Item
+		if err := json.Unmarshal(raw, &a); err != nil {
+			t.Fatalf("Unmarshal item: %v", err)
 		}
 		articles = append(articles, a)
 	}
@@ -64,7 +79,7 @@ func readArticlesFromGz(t *testing.T, path string) []*Item {
 
 func TestPutArticlesBasic(t *testing.T) {
 	db, c, dir := setupTestDB(t)
-	c.Subs = []*Subscription{
+	c.Subscriptions = []*Subscription{
 		{ID: 1, PackID: -1},
 	}
 
@@ -73,7 +88,7 @@ func TestPutArticlesBasic(t *testing.T) {
 		{SubID: 1, Title: "A2", Content: "C2", Link: "http://example.com/2", Published: 2000},
 	}
 
-	if err := PutArticles(ctx, db, articles); err != nil {
+	if err := db.PutArticles(ctx,articles); err != nil {
 		t.Fatalf("PutArticles: %v", err)
 	}
 
@@ -88,17 +103,17 @@ func TestPutArticlesBasic(t *testing.T) {
 func TestPutArticlesEmpty(t *testing.T) {
 	db, _, _ := setupTestDB(t)
 
-	if err := PutArticles(ctx, db, nil); err != nil {
+	if err := db.PutArticles(ctx,nil); err != nil {
 		t.Fatalf("PutArticles(nil): %v", err)
 	}
-	if err := PutArticles(ctx, db, []*Item{}); err != nil {
+	if err := db.PutArticles(ctx,[]*Item{}); err != nil {
 		t.Fatalf("PutArticles([]): %v", err)
 	}
 }
 
 func TestPutArticlesMultipleSubs(t *testing.T) {
 	db, c, dir := setupTestDB(t)
-	c.Subs = []*Subscription{
+	c.Subscriptions = []*Subscription{
 		{ID: 1, PackID: -1},
 		{ID: 2, PackID: -1},
 	}
@@ -108,7 +123,7 @@ func TestPutArticlesMultipleSubs(t *testing.T) {
 		{SubID: 2, Title: "Sub2-A", Published: 2000},
 	}
 
-	if err := PutArticles(ctx, db, articles); err != nil {
+	if err := db.PutArticles(ctx,articles); err != nil {
 		t.Fatalf("PutArticles: %v", err)
 	}
 
@@ -129,7 +144,7 @@ func TestPutArticlesPackSplitting(t *testing.T) {
 	// Very small pack size to force splitting
 	globals.PackageSize = 0 // 0 KB -> split after every flush
 
-	c.Subs = []*Subscription{
+	c.Subscriptions = []*Subscription{
 		{ID: 1, PackID: -1},
 	}
 
@@ -139,7 +154,7 @@ func TestPutArticlesPackSplitting(t *testing.T) {
 		{SubID: 1, Title: "A3", Content: "Content 3", Published: 3000},
 	}
 
-	if err := PutArticles(ctx, db, articles); err != nil {
+	if err := db.PutArticles(ctx,articles); err != nil {
 		t.Fatalf("PutArticles: %v", err)
 	}
 
@@ -155,12 +170,72 @@ func TestPutArticlesPackSplitting(t *testing.T) {
 	}
 }
 
+func readMetaFromGz(t *testing.T, path string) map[string]any {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(decompressGz(t, path)))
+	for dec.More() {
+		var obj map[string]any
+		if err := dec.Decode(&obj); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if _, ok := obj["ts"]; ok {
+			return obj
+		}
+	}
+	return nil
+}
+
+func TestPackMetadata(t *testing.T) {
+	db, c, dir := setupTestDB(t)
+	globals.PackageSize = 0 // force split after every article
+
+	c.Subscriptions = []*Subscription{
+		{ID: 1, PackID: -1},
+		{ID: 2, PackID: -1},
+	}
+
+	articles := []*Item{
+		{SubID: 1, Title: "A1", Content: "Content 1", Published: 1000},
+		{SubID: 2, Title: "A2", Content: "Content 2", Published: 2000},
+		{SubID: 1, Title: "A3", Content: "Content 3", Published: 3000},
+	}
+
+	if err := db.PutArticles(ctx,articles); err != nil {
+		t.Fatalf("PutArticles: %v", err)
+	}
+
+	// Pack 2.gz should have a meta line with total=1
+	// (1 article written before pack 2 started: A1 in pack 1)
+	pack2 := filepath.Join(dir, "2.gz")
+	meta := readMetaFromGz(t, pack2)
+	if meta == nil {
+		t.Fatal("expected meta line in pack 2.gz")
+	}
+	if _, ok := meta["ts"].(float64); !ok {
+		t.Errorf("ts field missing or not a number: %v", meta["ts"])
+	}
+	if n, ok := meta["n"].(float64); !ok || int(n) != 1 {
+		t.Errorf("n = %v, want 1", meta["n"])
+	}
+
+	// Verify cumulative counts on DBCore and Subscriptions
+	if c.NArticles != 3 {
+		t.Errorf("DBCore.NArticles = %d, want 3", c.NArticles)
+	}
+	if c.Subscriptions[0].NArticles != 2 {
+		t.Errorf("Sub[0].NArticles = %d, want 2", c.Subscriptions[0].NArticles)
+	}
+	if c.Subscriptions[1].NArticles != 1 {
+		t.Errorf("Sub[1].NArticles = %d, want 1", c.Subscriptions[1].NArticles)
+	}
+}
+
 func TestCommitAndReadDB(t *testing.T) {
 	db, c, dir := setupTestDB(t)
-	c.Subs = []*Subscription{
+	c.Subscriptions = []*Subscription{
 		{ID: 1, Title: "Test Feed", URL: "http://example.com/feed", PackID: -1},
 	}
-	c.NSubs = 2
+	c.NSubscriptions = 2
 
 	if err := db.Commit(ctx); err != nil {
 		t.Fatalf("CommitDB: %v", err)
@@ -177,14 +252,14 @@ func TestCommitAndReadDB(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	if core.NSubs != 2 {
-		t.Errorf("NSubs = %d, want 2", core.NSubs)
+	if core.NSubscriptions != 2 {
+		t.Errorf("NSubscriptions = %d, want 2", core.NSubscriptions)
 	}
-	if len(core.Subs) != 1 {
-		t.Fatalf("Subs len = %d, want 1", len(core.Subs))
+	if len(core.Subscriptions) != 1 {
+		t.Fatalf("Subscriptions len = %d, want 1", len(core.Subscriptions))
 	}
-	if core.Subs[0].Title != "Test Feed" {
-		t.Errorf("Sub title = %q, want %q", core.Subs[0].Title, "Test Feed")
+	if core.Subscriptions[0].Title != "Test Feed" {
+		t.Errorf("Sub title = %q, want %q", core.Subscriptions[0].Title, "Test Feed")
 	}
 }
 

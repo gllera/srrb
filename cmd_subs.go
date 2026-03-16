@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -30,7 +29,7 @@ func (o *AddCmd) Run() error {
 			return fmt.Errorf("subscription id must be greater than 0")
 		}
 
-		for _, e := range db.core.Subs {
+		for _, e := range db.Subscriptions() {
 			if e.ID == *o.Upd {
 				sub = e
 				break
@@ -41,11 +40,9 @@ func (o *AddCmd) Run() error {
 		}
 	} else {
 		sub = &Subscription{
-			ID:     db.core.NSubs,
 			PackID: -1,
 		}
-		db.core.NSubs++
-		db.core.Subs = append(db.core.Subs, sub)
+		db.AddSubscription(sub)
 	}
 
 	if o.Title != nil {
@@ -91,12 +88,7 @@ func (o *RmCmd) Run() error {
 	defer db.Close(ctx)
 
 	for _, id := range o.ID {
-		for i, s := range db.core.Subs {
-			if s.ID == id {
-				db.core.Subs = slices.Delete(db.core.Subs, i, i+1)
-				break
-			}
-		}
+		db.RemoveSubscription(id)
 	}
 
 	return db.Commit(ctx)
@@ -121,8 +113,8 @@ func (o *LsCmd) Run() error {
 		Error string `json:"error,omitempty" yaml:"error,omitempty"`
 	}
 
-	subsList := make([]*SubscriptionLS, 0, len(db.core.Subs))
-	for _, s := range db.core.Subs {
+	subsList := make([]*SubscriptionLS, 0, len(db.Subscriptions()))
+	for _, s := range db.Subscriptions() {
 		subsList = append(subsList, &SubscriptionLS{
 			Title: s.Title,
 			URL:   s.URL,

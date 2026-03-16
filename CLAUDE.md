@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**srrb** — Static RSS Reader Backend. A Go CLI tool (`srr`) that fetches, parses, and stores RSS/Atom/RDF feed articles into gzip-compressed packs. Supports local filesystem, S3, and SFTP storage backends.
+**srrb** — Static RSS Reader Backend. A Go CLI tool (`srrb`) that fetches, parses, and stores RSS/Atom/RDF feed articles into gzip-compressed packs. Supports local filesystem, S3, and SFTP storage backends.
 
 ## Commands
 
 ```bash
-go build -o srr .           # Build
+go build -o srrb .           # Build
 go test ./...               # Run all tests
 go test -run TestName .     # Run a single test
 go test -v ./backend/       # Test a specific package

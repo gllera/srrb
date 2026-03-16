@@ -4,16 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"slices"
 	"sort"
 	"strings"
 )
-
-type Extern struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-	ID   int    `json:"id"`
-}
 
 type ExternCmd struct {
 	Add ExternAddCmd `cmd:"" help:"Add external DB or update an existing one."`
@@ -41,7 +34,7 @@ func (o *ExternAddCmd) Run() error {
 			return fmt.Errorf("extern id must be greater than 0")
 		}
 
-		for _, e := range db.core.Exts {
+		for _, e := range db.Externs() {
 			if e.ID == *o.Upd {
 				ext = e
 				break
@@ -51,11 +44,8 @@ func (o *ExternAddCmd) Run() error {
 			return fmt.Errorf("extern id %d not found", *o.Upd)
 		}
 	} else {
-		ext = &Extern{
-			ID: db.core.NExts,
-		}
-		db.core.NExts++
-		db.core.Exts = append(db.core.Exts, ext)
+		ext = &Extern{}
+		db.AddExtern(ext)
 	}
 
 	if o.Name != nil {
@@ -80,7 +70,7 @@ func (o *ExternAddCmd) Run() error {
 }
 
 type ExternRmCmd struct {
-	ID []int `arg:"" help:"Subscriptions Ids to remove."`
+	ID []int `arg:"" help:"External Ids to remove."`
 }
 
 func (o *ExternRmCmd) Run() error {
@@ -92,12 +82,7 @@ func (o *ExternRmCmd) Run() error {
 	defer db.Close(ctx)
 
 	for _, id := range o.ID {
-		for i, e := range db.core.Exts {
-			if e.ID == id {
-				db.core.Exts = slices.Delete(db.core.Exts, i, i+1)
-				break
-			}
-		}
+		db.RemoveExtern(id)
 	}
 
 	return db.Commit(ctx)
@@ -115,9 +100,10 @@ func (o *ExternLsCmd) Run() error {
 	}
 	defer db.Close(ctx)
 
-	sort.Slice(db.core.Exts, func(i, j int) bool {
-		return strings.ToLower(db.core.Exts[i].Name) < strings.ToLower(db.core.Exts[j].Name)
+	externs := db.Externs()
+	sort.Slice(externs, func(i, j int) bool {
+		return strings.ToLower(externs[i].Name) < strings.ToLower(externs[j].Name)
 	})
 
-	return printFormatted(o.Format, db.core.Exts)
+	return printFormatted(o.Format, externs)
 }
