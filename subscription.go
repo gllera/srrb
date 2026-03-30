@@ -1,114 +1,148 @@
 package main
 
 import (
-	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
+	"strings"
 
-	"github.com/mmcdole/gofeed"
+	"github.com/microcosm-cc/bluemonday"
+
+	"github.com/gllera/srrb/mod"
 )
 
+var titlePolicy = bluemonday.StrictPolicy()
+
+func processItem(ctx context.Context, processor *mod.Module, pipeline []string, i *mod.RawItem) error {
+	for _, m := range pipeline {
+		if err := processor.Process(ctx, m, i); err != nil {
+			return fmt.Errorf("module %q failed: %w", m, err)
+		}
+	}
+	i.Title = html.UnescapeString(titlePolicy.Sanitize(i.Title))
+	i.Title = strings.Join(strings.Fields(i.Title), " ")
+	i.Link = strings.Map(stripControl, i.Link)
+	i.Content = strings.Map(stripControlKeepWS, i.Content)
+	return nil
+}
+
+func stripControl(r rune) rune {
+	if r <= ' ' || r == 0x7f {
+		return -1
+	}
+	return r
+}
+
+func stripControlKeepWS(r rune) rune {
+	if r < ' ' && r != '\t' && r != '\n' && r != '\r' {
+		return -1
+	}
+	return r
+}
+
 type Subscription struct {
-	Title     string   `json:"title"`
-	Url       string   `json:"url"`
-	Parsers   []string `json:"parsers,omitempty"`
-	Error     string   `json:"error,omitempty"`
-	Last_GUID uint     `json:"last_guid,omitempty"`
-	PackId    int      `json:"packid"`
-	Id        int      `json:"id"`
-	new_items []*gofeed.Item
+	ID             int      `json:"id"`
+	Title          string   `json:"title"`
+	URL            string   `json:"url"`
+	Tag            string   `json:"tag,omitempty"`
+	Pipeline       []string `json:"pipe,omitempty"`
+	FetchError     string   `json:"ferr,omitempty"`
+	StopGUID       uint32   `json:"stop_guid,omitempty"`
+	ETag           string   `json:"etag,omitempty"`
+	LastModified   string   `json:"last_modified,omitempty"`
+	TotalArticles  int      `json:"total_art,omitempty"`
+	LastAddedAt    int64    `json:"last_added,omitempty"`
+	newItems       []*Item
+	oTotalArticles int
+	oLastAddedAt   int64
 }
 
 func (s Subscription) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.Int("id", s.Id),
-		slog.String("url", s.Url),
+		slog.Int("id", s.ID),
+		slog.String("url", s.URL),
 	)
 }
 
-func (s *Subscription) Fetch(buf []byte, mod *Module) error {
-	slog.Debug(`downloading subscription articles.`, "", s)
+func (s *Subscription) Fetch(ctx context.Context, client *http.Client, buf []byte, processor *mod.Module) error {
+	slog.Debug("downloading subscription", "sub", s)
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	req, err := http.NewRequest("GET", s.Url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", s.URL, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "SRRB/"+version)
+	if s.ETag != "" {
+		req.Header.Set("If-None-Match", s.ETag)
+	}
+	if s.LastModified != "" {
+		req.Header.Set("If-Modified-Since", s.LastModified)
+	}
 
 	res, err := client.Do(req)
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusNotModified {
+		slog.Debug("subscription not modified", "sub", s)
+		return nil
+	}
 
 	if res.StatusCode != http.StatusOK {
-		res.Body.Close()
 		return fmt.Errorf("unexpected HTTP status: %s", res.Status)
 	}
 
-	n, err := io.ReadFull(res.Body, buf)
-	res.Body.Close()
+	etag := res.Header.Get("ETag")
+	lastModified := res.Header.Get("Last-Modified")
 
-	switch err {
-	case io.ErrUnexpectedEOF:
-	case io.EOF:
-		return fmt.Errorf(`empty response from subscription`)
-	case nil:
-		return fmt.Errorf(`subscription file bigger than %d bytes`, cap(buf)-1)
-	default:
+	n, err := io.ReadFull(res.Body, buf)
+	if err == nil {
+		return fmt.Errorf("subscription file bigger than %d bytes", cap(buf)-1)
+	}
+	if errors.Is(err, io.EOF) {
+		return fmt.Errorf("empty response from subscription")
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		return err
 	}
 
-	buf[n] = 0
-	reader := bytes.NewReader(buf[0 : n+1])
-	feeds, err := gofeed.NewParser().Parse(reader)
+	s.newItems = nil
+	var last *mod.RawItem
+
+	err = parseFeed(buf[:n], func(i *mod.RawItem) error {
+		if last == nil {
+			last = i
+		}
+		if s.StopGUID == i.GUID {
+			return ErrStopFeed
+		}
+		if err := processItem(ctx, processor, s.Pipeline, i); err != nil {
+			return err
+		}
+
+		s.newItems = append(s.newItems, &Item{
+			Sub:       s,
+			Title:     i.Title,
+			Content:   i.Content,
+			Link:      i.Link,
+			Published: i.Published.Unix(),
+		})
+		return nil
+	})
+
 	if err != nil {
 		return err
 	}
-
-	s.new_items = make([]*gofeed.Item, 0, len(feeds.Items))
-	for _, i := range feeds.Items {
-		if s.Last_GUID == hash(i.GUID) {
-			break
-		}
-
-		if i.PublishedParsed == nil {
-			t := parseHTTPTime(i.Published)
-			i.PublishedParsed = &t
-		} else {
-			t := i.PublishedParsed.UTC()
-			i.PublishedParsed = &t
-		}
-
-		if i.Content == "" {
-			i.Content = i.Description
-			i.Description = ""
-		}
-		i.Author = nil
-
-		s.new_items = append(s.new_items, i)
+	if last != nil {
+		s.StopGUID = last.GUID
 	}
-
-	// Process new items
-	for _, i := range s.new_items {
-		for _, m := range s.Parsers {
-			if err := mod.Process(m, i); err != nil {
-				return fmt.Errorf(`module "%s" failed. %v`, m, err)
-			}
-		}
-		mod.Sanitize(i)
-		mod.Minify(i)
-	}
-
-	if len(s.new_items) > 0 {
-		s.Last_GUID = hash(s.new_items[0].GUID)
-	}
-
+	s.ETag = etag
+	s.LastModified = lastModified
 	return nil
 }

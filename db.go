@@ -3,180 +3,306 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
+	"log/slog"
+	"slices"
+
+	"github.com/gllera/srrb/backend"
 )
 
-type DB interface {
-	Get(key string, ignore_missing bool) ([]byte, error)
-	Put(key string, val []byte, ignore_existing bool) error
-	AtomicPut(key string, val []byte) error
-	Rm(key string) error
-	Mkdir() error
-	Core() *DB_core
-}
-
-type DB_core struct {
-	Latest     bool            `json:"latest"`
-	N_Packs    int             `json:"n_packs"`
-	N_Subs     int             `json:"n_subs"`
-	N_Exts     int             `json:"n_exts"`
-	Subs       []*Subscription `json:"subs"`
-	Exts       []*Extern       `json:"exts,omitempty"`
-	Last_fetch int64           `json:"last_fetch,omitempty"`
-
-	is_writable bool
-}
-
-type Extern struct {
-	Name string `json:"name"`
-	Url  string `json:"url"`
-	Id   int    `json:"id"`
-}
-
-func (d *DB_core) Core() *DB_core {
-	return d
-}
-
-func newDB_Core(is_writable bool) DB_core {
-	return DB_core{
-		N_Subs:      1,
-		N_Exts:      1,
-		N_Packs:     1,
-		is_writable: is_writable,
+func jsonEncode(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
 	}
+	return buf.Bytes(), nil
 }
 
-func (d *DB_core) unmarshal(data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
+const (
+	dbFileKey   = "db.json"
+	dbLockKey   = ".locked"
+	idxPackSize = 1000
+)
 
-	var err error
-	if err = json.Unmarshal(data, d); err != nil {
-		return fmt.Errorf(`unable to parse db file. %v`, err)
-	}
-
-	return nil
+type DB struct {
+	backend.Backend
+	core   DBCore
+	locked bool
 }
 
-func PutArticles(db DB, articles []Article) error {
-	if len(articles) == 0 {
-		return nil
-	}
-	c := db.Core()
+type DBCore struct {
+	DataToggle     bool            `json:"data_tog"`
+	TSToggle       bool            `json:"ts_tog"`
+	FetchedAt      int64           `json:"fetched_at"`
+	SubSeq         int             `json:"sub_seq"`
+	TotalArticles  int             `json:"total_art"`
+	NextPackID     int             `json:"next_pid"`
+	PackOffset     int             `json:"pack_off"`
+	FirstFetchedAt int64           `json:"first_fetched,omitempty"`
+	Subscriptions  []*Subscription `json:"subscriptions"`
+	oTotalArticles int
+	oFetchedAt     int64
+}
 
-	var buffer bytes.Buffer
-	gz := gzip.NewWriter(&buffer)
-	defer gz.Close()
-
-	// Read the latest pack to get the current fetch state
-	data, err := db.Get(fmt.Sprintf("%v.gz", c.Latest), true)
+func NewDB(ctx context.Context, locked bool) (*DB, error) {
+	backend, err := backend.Open(ctx, globals.OutputPath)
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	db := &DB{
+		Backend: backend,
+		locked:  locked,
+	}
+
+	if locked {
+		if err := db.Put(ctx, dbLockKey, nil, globals.Force); err != nil {
+			db.Backend.Close()
+			return nil, fmt.Errorf("create lock file: %w", err)
+		}
+	}
+
+	data, err := db.Get(ctx, dbFileKey, true)
+	if err != nil {
+		db.Close(ctx)
+		return nil, err
 	}
 
 	if len(data) != 0 {
-		unziped, err := gzip.NewReader(bytes.NewReader(data))
-		if err != nil {
-			return err
+		if err := json.Unmarshal(data, &db.core); err != nil {
+			db.Close(ctx)
+			return nil, fmt.Errorf("decode %s: %w", dbFileKey, err)
 		}
-		defer unziped.Close()
-
-		_, err = io.Copy(gz, unziped)
-		if err != nil {
-			return err
+		for _, s := range db.core.Subscriptions {
+			s.oTotalArticles = s.TotalArticles
+			s.oLastAddedAt = s.LastAddedAt
 		}
 	}
 
-	// Create subscriptions map
-	subs := make(map[int]*Subscription)
-	for _, sub := range c.Subs {
-		subs[sub.Id] = sub
-	}
-
-	// Save articles
-	jsonEncoder := New_JsonEncoder()
-	for _, item := range articles {
-		sub := subs[item.SubId]
-		if sub.PackId != c.N_Packs {
-			item.Prev = sub.PackId
-			sub.PackId = c.N_Packs
-		}
-
-		data, _ := jsonEncoder.Encode(item)
-		gz.Write(data)
-		gz.Flush()
-
-		if buffer.Len() >= (globals.PackageSize << 10) {
-			save(fmt.Sprintf("%d.gz", c.N_Packs), gz, db, &buffer)
-			c.N_Packs++
-		}
-	}
-
-	// Save remaining articles without final pack
-	if len(articles) > 0 {
-		c.Latest = !c.Latest
-		save(fmt.Sprintf("%v.gz", c.Latest), gz, db, &buffer)
-	}
-
-	return nil
+	db.core.oFetchedAt = db.core.FetchedAt
+	db.core.oTotalArticles = db.core.TotalArticles
+	return db, nil
 }
 
-func save(name string, gz *gzip.Writer, db DB, buffer *bytes.Buffer) error {
-	gz.Close()
-	if err := db.Put(name, buffer.Bytes(), true); err != nil {
+func (o *DB) Close(ctx context.Context) error {
+	if o.locked {
+		if err := o.Rm(context.WithoutCancel(ctx), dbLockKey); err != nil {
+			slog.Warn("remove lock file", "error", err)
+		}
+	}
+	return o.Backend.Close()
+}
+
+func (o *DB) Commit(ctx context.Context) error {
+	data, err := jsonEncode(&o.core)
+	if err != nil {
 		return err
 	}
-	buffer.Reset()
-	gz.Reset(buffer)
+	return o.AtomicPut(ctx, dbFileKey, data)
+}
+
+func (o *DB) Subscriptions() []*Subscription {
+	return o.core.Subscriptions
+}
+
+func (o *DB) AddSubscription(s *Subscription) {
+	o.core.SubSeq++
+	s.ID = o.core.SubSeq
+	o.core.Subscriptions = append(o.core.Subscriptions, s)
+}
+
+func (o *DB) RemoveSubscription(id int) {
+	for i, s := range o.core.Subscriptions {
+		if s.ID == id {
+			o.core.Subscriptions = slices.Delete(o.core.Subscriptions, i, i+1)
+			return
+		}
+	}
+}
+
+type Item struct {
+	Sub       *Subscription
+	Title     string
+	Content   string
+	Link      string
+	Published int64
+}
+
+type pack struct {
+	buf bytes.Buffer
+	gz  *gzip.Writer
+}
+
+func newPack() *pack {
+	p := &pack{}
+	p.gz = gzip.NewWriter(&p.buf)
+	return p
+}
+
+func (p *pack) writeTSV(fields ...any) {
+	for i, f := range fields {
+		if i > 0 {
+			p.gz.Write([]byte{'\t'})
+		}
+		fmt.Fprint(p.gz, f)
+	}
+	p.gz.Write([]byte{'\n'})
+}
+
+func (p *pack) writeEntry(s string) {
+	io.WriteString(p.gz, s)
+	p.gz.Write([]byte{0})
+}
+
+func (o *DB) loadPack(ctx context.Context, key string) (*pack, error) {
+	p := newPack()
+	data, err := o.Get(ctx, key, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return p, nil
+	}
+	r, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	_, err = io.Copy(p.gz, r)
+	r.Close()
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (o *DB) savePack(ctx context.Context, key string, p *pack) error {
+	if err := p.gz.Close(); err != nil {
+		return err
+	}
+	if err := o.Put(ctx, key, p.buf.Bytes(), true); err != nil {
+		return err
+	}
+	p.buf.Reset()
+	p.gz.Reset(&p.buf)
 	return nil
 }
 
-func UnlockDB(db DB) {
-	db.Rm(".locked")
-}
+func (o *DB) UpdateTS(ctx context.Context) error {
+	c := &o.core
+	week := c.FetchedAt / 604800
+	prevWeek := c.oFetchedAt / 604800
+	full := prevWeek != week
 
-func CommitDB(db DB) error {
-	data, _ := New_JsonEncoder().Encode(db.Core())
-	return db.AtomicPut("db.json", data)
-}
-
-func NewDB(is_writable bool) (DB, *DB_core, error) {
-	u, err := url.Parse(globals.OutputPath)
-	if err != nil {
-		panic(err)
-	}
-
-	var db DB
-	var c *DB_core
-	switch u.Scheme {
-	case "":
-		db, c, err = NewDB_Local(u, is_writable)
-	case "s3":
-		db, c, err = NewDB_S3(u, is_writable)
-	default:
-		err = fmt.Errorf(`unsupported output URL scheme %s`, u.Scheme)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if is_writable {
-		if err = db.Mkdir(); err != nil {
-			return nil, nil, err
-		} else if err = db.Put(".locked", []byte{}, globals.Force); err != nil {
-			return nil, nil, err
+	var dirtySubs []*Subscription
+	for _, s := range c.Subscriptions {
+		if s.TotalArticles > s.oTotalArticles {
+			dirtySubs = append(dirtySubs, s)
 		}
 	}
-
-	if data, err := db.Get("db.json", true); err != nil {
-		return nil, nil, err
-	} else if err = c.unmarshal(data); err != nil {
-		return nil, nil, err
+	if !full && len(dirtySubs) == 0 {
+		return nil
 	}
 
-	return db, c, nil
+	ts, err := o.loadPack(ctx, fmt.Sprintf("ts/%v.gz", c.TSToggle))
+	if err != nil {
+		return err
+	}
+
+	if full {
+		absSnap := []any{0, c.oTotalArticles}
+		for _, s := range c.Subscriptions {
+			if s.oTotalArticles > 0 {
+				absSnap = append(absSnap, s.ID, s.oTotalArticles, s.oLastAddedAt)
+			}
+		}
+
+		if c.oFetchedAt != 0 {
+			if err := o.savePack(ctx, fmt.Sprintf("ts/%d.gz", prevWeek), ts); err != nil {
+				return err
+			}
+			for w := prevWeek + 1; w < week; w++ {
+				p := newPack()
+				p.writeTSV(absSnap...)
+				if err := o.savePack(ctx, fmt.Sprintf("ts/%d.gz", w), p); err != nil {
+					return err
+				}
+			}
+		}
+
+		ts.writeTSV(absSnap...)
+	}
+
+	if c.FirstFetchedAt == 0 && c.TotalArticles > 0 {
+		c.FirstFetchedAt = c.FetchedAt
+	}
+
+	if len(dirtySubs) > 0 {
+		delta := []any{c.FetchedAt % 604800, c.TotalArticles}
+		for _, s := range dirtySubs {
+			delta = append(delta, s.ID, s.TotalArticles)
+		}
+		ts.writeTSV(delta...)
+	}
+
+	c.TSToggle = !c.TSToggle
+	return o.savePack(ctx, fmt.Sprintf("ts/%v.gz", c.TSToggle), ts)
+}
+
+func (o *DB) PutArticles(ctx context.Context, articles []*Item) error {
+	if len(articles) == 0 {
+		return nil
+	}
+
+	c := &o.core
+	latest := fmt.Sprintf("%v.gz", c.DataToggle)
+
+	meta, err := o.loadPack(ctx, "idx/"+latest)
+	if err != nil {
+		return err
+	}
+	data, err := o.loadPack(ctx, "data/"+latest)
+	if err != nil {
+		return err
+	}
+
+	for _, item := range articles {
+		if c.TotalArticles > 0 && c.TotalArticles%idxPackSize == 0 {
+			if err := o.savePack(ctx, fmt.Sprintf("idx/%d.gz", c.TotalArticles/idxPackSize-1), meta); err != nil {
+				return err
+			}
+		}
+
+		if data.buf.Len() >= globals.PackageSize<<10 {
+			if err := o.savePack(ctx, fmt.Sprintf("data/%d.gz", c.NextPackID), data); err != nil {
+				return err
+			}
+		}
+
+		if data.buf.Len() == 0 {
+			c.NextPackID++
+			c.PackOffset = 0
+		}
+
+		meta.writeTSV(c.FetchedAt, c.NextPackID, c.PackOffset, item.Sub.ID, item.Published, item.Title, item.Link)
+		data.writeEntry(item.Content)
+
+		item.Sub.TotalArticles++
+		item.Sub.LastAddedAt = c.FetchedAt
+
+		c.TotalArticles++
+		c.PackOffset++
+	}
+
+	// Toggle and save both latest packs
+	c.DataToggle = !c.DataToggle
+	latest = fmt.Sprintf("%v.gz", o.core.DataToggle)
+	if err := o.savePack(ctx, "idx/"+latest, meta); err != nil {
+		return err
+	}
+	return o.savePack(ctx, "data/"+latest, data)
 }
