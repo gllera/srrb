@@ -76,7 +76,7 @@ srr preview https://example.com/feed.xml -p "#sanitize" -p "#minify"
 | `--force` | `SRR_FORCE` | false | Override DB write lock |
 | `-d, --debug` | `SRR_DEBUG` | false | Enable debug logging |
 
-Configuration can also be set via `config.yaml` in the working directory.
+Configuration can also be set via `$XDG_CONFIG_HOME/srr/srr.yaml` (defaults to `~/.config/srr/srr.yaml`).
 
 ## Storage Backends
 

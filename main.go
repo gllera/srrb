@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/alecthomas/kong"
@@ -49,13 +50,19 @@ func main() {
 	var cli CLI
 	globals = &cli.Globals
 
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		home, _ := os.UserHomeDir()
+		configDir = filepath.Join(home, ".config")
+	}
+
 	ctx := kong.Parse(&cli,
 		kong.Vars{
 			"nproc": fmt.Sprint(runtime.NumCPU()),
 		},
 		kong.Name("srr"),
 		kong.Description("Static RSS Reader backend."),
-		kong.Configuration(kongyaml.Loader, "config.yaml"),
+		kong.Configuration(kongyaml.Loader, filepath.Join(configDir, "srr", "srr.yaml")),
 		kong.ShortUsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{
 			Compact:             true,
