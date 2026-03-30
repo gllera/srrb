@@ -85,7 +85,7 @@ func (o *PreviewCmd) Run() error {
 		return fmt.Errorf("unexpected HTTP status: %s", res.Status)
 	}
 
-	buf := make([]byte, globals.MaxDownload*(1<<10)+1)
+	buf := make([]byte, globals.MaxFeedSize*(1<<10)+1)
 	n, err := io.ReadFull(res.Body, buf)
 	if err == nil {
 		return fmt.Errorf("feed bigger than %d bytes", cap(buf)-1)

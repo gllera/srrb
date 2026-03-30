@@ -50,7 +50,7 @@ type DBCore struct {
 }
 
 func NewDB(ctx context.Context, locked bool) (*DB, error) {
-	backend, err := backend.Open(ctx, globals.OutputPath)
+	backend, err := backend.Open(ctx, globals.Store)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +277,7 @@ func (o *DB) PutArticles(ctx context.Context, articles []*Item) error {
 			}
 		}
 
-		if data.buf.Len() >= globals.PackageSize<<10 {
+		if data.buf.Len() >= globals.PackSize<<10 {
 			if err := o.savePack(ctx, fmt.Sprintf("data/%d.gz", c.NextPackID), data); err != nil {
 				return err
 			}

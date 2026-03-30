@@ -1,0 +1,119 @@
+# srrb
+
+Static RSS Reader Backend — a Go CLI that fetches RSS/Atom/RDF feeds into compact, gzip-compressed pack files designed for efficient static hosting and incremental sync.
+
+## Install
+
+```bash
+go install github.com/gllera/srrb@latest
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/gllera/srrb.git
+cd srrb
+CGO_ENABLED=0 go build -ldflags "-s -w" -o srr .
+```
+
+## Usage
+
+```
+srr <command> [flags]
+```
+
+### Commands
+
+| Command   | Description                                      |
+|-----------|--------------------------------------------------|
+| `add`     | Subscribe to a feed or update an existing one     |
+| `rm`      | Unsubscribe from feed(s)                          |
+| `ls`      | List subscriptions                                |
+| `fetch`   | Fetch new articles from all subscriptions         |
+| `import`  | Import subscriptions from an OPML file            |
+| `preview` | Preview processed feed articles in a browser      |
+| `version` | Print version information                         |
+
+### Examples
+
+```bash
+# Add a subscription
+srr add -t "Tech News" -u https://example.com/feed.xml -g tech/news
+
+# Add with processing pipeline
+srr add -t "Blog" -u https://example.com/rss -p "#sanitize" -p "#minify"
+
+# Update an existing subscription
+srr add --upd 1 -p "#sanitize"
+
+# List subscriptions (filter by tag)
+srr ls -g tech
+
+# Fetch all feeds
+srr fetch
+
+# Fetch with 8 concurrent workers
+srr -j 8 fetch
+
+# Import from OPML (all feeds)
+srr import feeds.opml -a
+
+# Import selectively with dry-run
+srr import feeds.opml -i "1" -i "2.3" -n
+
+# Preview a feed with processors
+srr preview https://example.com/feed.xml -p "#sanitize" -p "#minify"
+```
+
+## Global Flags
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `-w, --workers` | `SRR_WORKERS` | nproc | Concurrent downloads |
+| `-s, --pack-size` | `SRR_PACK_SIZE` | 200 | Target pack size (KB) |
+| `-m, --max-feed-size` | `SRR_MAX_FEED_SIZE` | 5000 | Max feed download size (KB) |
+| `-o, --store` | `SRR_STORE` | packs | Storage destination |
+| `--force` | `SRR_FORCE` | false | Override DB write lock |
+| `-d, --debug` | `SRR_DEBUG` | false | Enable debug logging |
+
+Configuration can also be set via `config.yaml` in the working directory.
+
+## Storage Backends
+
+The output path (`-o`) determines which backend is used:
+
+| Backend | Example | Notes |
+|---------|---------|-------|
+| Local | `srr -o ./packs fetch` | Default. Auto-creates directories. |
+| S3 | `srr -o s3://bucket/prefix fetch` | Uses standard AWS SDK credentials. |
+| SFTP | `srr -o sftp://user@host/path fetch` | Auth: URL password, `~/.ssh/` keys, or SSH agent. |
+
+## Module Pipeline
+
+Subscriptions can define a processing pipeline that transforms articles during fetch.
+
+**Built-in modules:**
+
+- `#sanitize` — HTML sanitization (bluemonday)
+- `#minify` — HTML minification (tdewolff/minify)
+
+**Custom modules** — any shell command that reads/writes JSON via stdin/stdout:
+
+```bash
+srr add -t "Feed" -u https://example.com/rss \
+  -p "#sanitize" -p "#minify" -p "jq '.content |= ascii_downcase'"
+```
+
+## Pack Format
+
+Articles are stored in three gzip-compressed series:
+
+- **`idx/`** — TSV metadata index (split every 1000 articles)
+- **`data/`** — Article content, null-byte separated (split at target pack size)
+- **`ts/`** — Timestamped delta snapshots (split by week)
+
+This format is optimized for static file hosting with efficient incremental client sync.
+
+## License
+
+See [LICENSE](LICENSE) for details.

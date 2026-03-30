@@ -14,12 +14,12 @@ var version = "development"
 var globals *Globals
 
 type Globals struct {
-	Jobs        int    `short:"j" default:"${nproc}" env:"SRR_JOBS"         help:"Number of concurrent downloads."`
-	PackageSize int    `short:"s" default:"200"      env:"SRR_PACKAGE_SIZE" help:"Target package size in KB."`
-	MaxDownload int    `short:"m" default:"5000"     env:"SRR_MAX_DOWNLOAD" help:"Max downloadable file size in KB."`
-	OutputPath  string `short:"o" default:"packs"    env:"SRR_OUTPUT_PATH"  help:"Packages destination path."`
-	Force       bool   `                             env:"SRR_FORCE"        help:"Override DB write lock if needed."`
-	Debug       bool   `short:"d"                    env:"SRR_DEBUG"        help:"Enable debug mode."`
+	Workers     int    `short:"w" default:"${nproc}" env:"SRR_WORKERS"       help:"Number of concurrent downloads."`
+	PackSize    int    `short:"s" default:"200"      env:"SRR_PACK_SIZE"     help:"Target pack size in KB."`
+	MaxFeedSize int    `short:"m" default:"5000"     env:"SRR_MAX_FEED_SIZE" help:"Max feed download size in KB."`
+	Store       string `short:"o" default:"packs"    env:"SRR_STORE"         help:"Storage destination path."`
+	Force       bool   `                             env:"SRR_FORCE"         help:"Override DB write lock if needed."`
+	Debug       bool   `short:"d"                    env:"SRR_DEBUG"         help:"Enable debug mode."`
 }
 
 type CLI struct {
@@ -68,20 +68,20 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
-	if globals.OutputPath == "" {
-		fatal("output path is required")
+	if globals.Store == "" {
+		fatal("store path is required")
 	}
 
-	if globals.PackageSize < 1 {
-		globals.PackageSize = 200
+	if globals.PackSize < 1 {
+		globals.PackSize = 200
 	}
 
-	if globals.MaxDownload < 1 {
-		globals.MaxDownload = 5000
+	if globals.MaxFeedSize < 1 {
+		globals.MaxFeedSize = 5000
 	}
 
-	if globals.Jobs < 1 {
-		globals.Jobs = runtime.NumCPU()
+	if globals.Workers < 1 {
+		globals.Workers = runtime.NumCPU()
 	}
 
 	if err := ctx.Run(); err != nil {

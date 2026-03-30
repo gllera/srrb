@@ -21,8 +21,8 @@ func setupTestDB(t *testing.T) (*DB, *DBCore, string) {
 	t.Helper()
 	dir := t.TempDir()
 	globals = &Globals{
-		PackageSize: 1, // 1 KB, small to test pack splitting
-		OutputPath:  dir,
+		PackSize: 1, // 1 KB, small to test pack splitting
+		Store:    dir,
 	}
 
 	db, err := NewDB(ctx, false)
@@ -195,7 +195,7 @@ func TestPutArticlesMultipleSubs(t *testing.T) {
 func TestPutArticlesPackSplitting(t *testing.T) {
 	db, c, dir := setupTestDB(t)
 	// Very small pack size to force content splitting
-	globals.PackageSize = 0 // 0 KB -> split after every flush
+	globals.PackSize = 0 // 0 KB -> split after every flush
 
 	sub1 := &Subscription{ID: 1}
 	c.Subscriptions = []*Subscription{sub1}
@@ -210,7 +210,7 @@ func TestPutArticlesPackSplitting(t *testing.T) {
 		t.Fatalf("PutArticles: %v", err)
 	}
 
-	// With PackageSize=0, content packs should split
+	// With PackSize=0, content packs should split
 	if c.NextPackID <= 1 {
 		t.Errorf("expected pack splitting, NPacks = %d", c.NextPackID)
 	}
@@ -234,7 +234,7 @@ func readTsLines(t *testing.T, path string) [][]string {
 
 func TestPackMetadata(t *testing.T) {
 	db, c, dir := setupTestDB(t)
-	globals.PackageSize = 0 // force content split after every article
+	globals.PackSize = 0 // force content split after every article
 
 	sub1, sub2 := &Subscription{ID: 1}, &Subscription{ID: 2}
 	c.Subscriptions = []*Subscription{sub1, sub2}
@@ -425,7 +425,7 @@ func TestAtomicPut(t *testing.T) {
 
 func TestDBLocking(t *testing.T) {
 	dir := t.TempDir()
-	globals = &Globals{PackageSize: 1, OutputPath: dir}
+	globals = &Globals{PackSize: 1, Store: dir}
 
 	db, err := NewDB(ctx, true)
 	if err != nil {
@@ -453,7 +453,7 @@ func TestDBLocking(t *testing.T) {
 
 func TestDBLockingForce(t *testing.T) {
 	dir := t.TempDir()
-	globals = &Globals{PackageSize: 1, OutputPath: dir, Force: true}
+	globals = &Globals{PackSize: 1, Store: dir, Force: true}
 
 	db1, err := NewDB(ctx, true)
 	if err != nil {
@@ -514,7 +514,7 @@ func TestRemoveNonExistentSubscription(t *testing.T) {
 
 func TestCommitAndReopen(t *testing.T) {
 	dir := t.TempDir()
-	globals = &Globals{PackageSize: 1, OutputPath: dir}
+	globals = &Globals{PackSize: 1, Store: dir}
 
 	db, err := NewDB(ctx, false)
 	if err != nil {
@@ -697,7 +697,7 @@ func TestPutArticlesToggle(t *testing.T) {
 
 func TestDBOpenCorruptedJSON(t *testing.T) {
 	dir := t.TempDir()
-	globals = &Globals{PackageSize: 1, OutputPath: dir}
+	globals = &Globals{PackSize: 1, Store: dir}
 
 	// Write invalid db.json
 	os.WriteFile(filepath.Join(dir, "db.json"), []byte("not json"), 0644)
@@ -710,7 +710,7 @@ func TestDBOpenCorruptedJSON(t *testing.T) {
 
 func TestDBOpenEmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	globals = &Globals{PackageSize: 1, OutputPath: dir}
+	globals = &Globals{PackSize: 1, Store: dir}
 
 	// Fresh DB with no db.json should work
 	db, err := NewDB(ctx, false)

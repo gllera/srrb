@@ -33,12 +33,12 @@ func (o *FetchCmd) Run() error {
 	}
 	processor := mod.New()
 
-	ch := make(chan *Subscription, globals.Jobs)
+	ch := make(chan *Subscription, globals.Workers)
 	var wg sync.WaitGroup
 
-	for range globals.Jobs {
+	for range globals.Workers {
 		wg.Go(func() {
-			buffer := make([]byte, globals.MaxDownload*(1<<10)+1)
+			buffer := make([]byte, globals.MaxFeedSize*(1<<10)+1)
 
 			for s := range ch {
 				s.FetchError = ""

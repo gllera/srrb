@@ -18,7 +18,7 @@ Release: `CGO_ENABLED=0 go build -ldflags "-s -w"`. No Makefile/linter/Dockerfil
 ## Architecture
 
 - **`main.go`** — CLI via `alecthomas/kong` + YAML config. `Globals` struct for flags. Inline `version` subcommand.
-- **`cmd_fetch.go`** — `signal.NotifyContext` for graceful shutdown, channel-based worker pool (`globals.Jobs` goroutines). Articles sorted by published time (ascending) before storage. Order: `PutArticles` → `UpdateTS` → `Commit`.
+- **`cmd_fetch.go`** — `signal.NotifyContext` for graceful shutdown, channel-based worker pool (`globals.Workers` goroutines). Articles sorted by published time (ascending) before storage. Order: `PutArticles` → `UpdateTS` → `Commit`.
 - **`feed.go`** — Streaming XML parser, auto-detects RSS/Atom/RDF. GUIDs: FNV-32a → `uint32` (fallback: GUID → ID → Link → empty hash).
 - **`cmd_subs.go`** — `AddCmd` (add/update subscription via `--upd`, `-t/--title`, `-u/--url`, `-g/--tag`, `-p/--parsers`), `RmCmd`, `LsCmd` (filter by `-g/--tag`, yaml/json output).
 - **`cmd_import.go`** — OPML import with hierarchical ID selection (`-a` all, `-i` specific). OPML group hierarchy auto-resolves to hierarchical tags; `-g/--tag` overrides. `-n/--dry-run` lists resulting subscriptions without importing.
@@ -46,7 +46,7 @@ Low-level storage interface: `Get`/`Put`/`AtomicPut`/`Rm`/`Close`. Registry sele
 | Series | Format | Split rule |
 |---|---|---|
 | `idx/` | TSV metadata (7 columns, see `savePack`) | Every 1000 articles (`idxPackSize`) |
-| `data/` | Null-byte-separated content | At `PackageSize` (tracked by `next_pid`/`pack_off`) |
+| `data/` | Null-byte-separated content | At `PackSize` (tracked by `next_pid`/`pack_off`) |
 | `ts/` | TSV delta snapshots, finalized weekly by epoch-week | By week (epoch / 604800) |
 
 - File-based locking (`.locked` nil-payload marker); lock removal uses `context.WithoutCancel` to survive cancellation.
