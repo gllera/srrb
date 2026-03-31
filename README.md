@@ -67,16 +67,25 @@ srr preview https://example.com/feed.xml -p "#sanitize" -p "#minify"
 
 ## Global Flags
 
-| Flag | Env Var | Default | Description |
-|------|---------|---------|-------------|
-| `-w, --workers` | `SRR_WORKERS` | nproc | Concurrent downloads |
-| `-s, --pack-size` | `SRR_PACK_SIZE` | 200 | Target pack size (KB) |
-| `-m, --max-feed-size` | `SRR_MAX_FEED_SIZE` | 5000 | Max feed download size (KB) |
-| `-o, --store` | `SRR_STORE` | packs | Storage destination |
-| `--force` | `SRR_FORCE` | false | Override DB write lock |
-| `-d, --debug` | `SRR_DEBUG` | false | Enable debug logging |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-w, --workers` | nproc | Concurrent downloads |
+| `-s, --pack-size` | 200 | Target pack size (KB) |
+| `-m, --max-feed-size` | 5000 | Max feed download size (KB) |
+| `-o, --store` | packs | Storage destination |
+| `--force` | false | Override DB write lock |
+| `-d, --debug` | false | Enable debug logging |
 
-Configuration can also be set via `$XDG_CONFIG_HOME/srr/srr.yaml` (defaults to `~/.config/srr/srr.yaml`). Override the config file path with `SRR_CONFIG` env var.
+Global flags can also be set via environment variables (prefixed `SRR_`, e.g. `SRR_WORKERS`) or in a YAML config file using their long flag names as keys:
+
+```yaml
+# $XDG_CONFIG_HOME/srr/srr.yaml (or override path with $SRR_CONFIG)
+workers: 4
+pack-size: 500
+store: /path/to/packs
+```
+
+Precedence: CLI flags > env vars > config file > defaults.
 
 ## Storage Backends
 
