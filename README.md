@@ -53,7 +53,7 @@ srr ls -g tech
 srr fetch
 
 # Fetch with 8 concurrent workers
-srr -j 8 fetch
+srr -w 8 fetch
 
 # Import from OPML (all feeds)
 srr import feeds.opml -a
@@ -76,7 +76,7 @@ srr preview https://example.com/feed.xml -p "#sanitize" -p "#minify"
 | `--force` | `SRR_FORCE` | false | Override DB write lock |
 | `-d, --debug` | `SRR_DEBUG` | false | Enable debug logging |
 
-Configuration can also be set via `$XDG_CONFIG_HOME/srr/srr.yaml` (defaults to `~/.config/srr/srr.yaml`).
+Configuration can also be set via `$XDG_CONFIG_HOME/srr/srr.yaml` (defaults to `~/.config/srr/srr.yaml`). Override the config file path with `SRR_CONFIG` env var.
 
 ## Storage Backends
 
@@ -87,6 +87,31 @@ The output path (`-o`) determines which backend is used:
 | Local | `srr -o ./packs fetch` | Default. Auto-creates directories. |
 | S3 | `srr -o s3://bucket/prefix fetch` | Uses standard AWS SDK credentials. |
 | SFTP | `srr -o sftp://user@host/path fetch` | Auth: URL password, `~/.ssh/` keys, or SSH agent. |
+
+### Backend Configuration
+
+Backends can be configured via YAML sections in the config file:
+
+```yaml
+# S3 backend
+s3:
+  region: us-west-2
+  endpoint: https://minio.example.com
+  profile: production
+  access-key-id: AKIA...
+  secret-access-key: ...
+  session-token: ...
+
+# SFTP backend
+sftp:
+  user: deploy
+  password: secret
+  private-key: /path/to/key
+  known-hosts-file: ~/.ssh/known_hosts
+  insecure: false
+```
+
+SFTP uses `~/.ssh/known_hosts` for host key verification by default. Set `insecure: true` to skip verification.
 
 ## Module Pipeline
 

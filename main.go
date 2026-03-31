@@ -9,6 +9,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	kongyaml "github.com/alecthomas/kong-yaml"
+	"github.com/gllera/srrb/backend"
 )
 
 var version = "development"
@@ -55,6 +56,10 @@ func main() {
 		home, _ := os.UserHomeDir()
 		configDir = filepath.Join(home, ".config")
 	}
+	configPath := os.Getenv("SRR_CONFIG")
+	if configPath == "" {
+		configPath = filepath.Join(configDir, "srr", "srr.yaml")
+	}
 
 	ctx := kong.Parse(&cli,
 		kong.Vars{
@@ -62,7 +67,7 @@ func main() {
 		},
 		kong.Name("srr"),
 		kong.Description("Static RSS Reader backend."),
-		kong.Configuration(kongyaml.Loader, filepath.Join(configDir, "srr", "srr.yaml")),
+		kong.Configuration(kongyaml.Loader, configPath),
 		kong.ShortUsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{
 			Compact:             true,
@@ -70,6 +75,10 @@ func main() {
 			NoExpandSubcommands: true,
 		}),
 	)
+
+	if err := backend.LoadConfigs(configPath); err != nil {
+		fatal("loading backend configs", "err", err)
+	}
 
 	if globals.Debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)

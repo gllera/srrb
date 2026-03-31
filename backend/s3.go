@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -23,8 +24,20 @@ const (
 	s3ErrPreconditionFailed = "PreconditionFailed"
 )
 
+var s3Cfg S3Config
+
+type S3Config struct {
+	Region          string `yaml:"region"`
+	Endpoint        string `yaml:"endpoint"`
+	Profile         string `yaml:"profile"`
+	AccessKeyID     string `yaml:"access-key-id"`
+	SecretAccessKey string `yaml:"secret-access-key"`
+	SessionToken    string `yaml:"session-token"`
+}
+
 func init() {
 	Register("s3", newS3)
+	RegisterConfig("s3", &s3Cfg)
 }
 
 type S3 struct {
@@ -34,9 +47,27 @@ type S3 struct {
 }
 
 func newS3(ctx context.Context, u *url.URL) (Backend, error) {
-	cfg, err := config.LoadDefaultConfig(ctx)
+	var opts []func(*config.LoadOptions) error
+
+	if s3Cfg.Region != "" {
+		opts = append(opts, config.WithRegion(s3Cfg.Region))
+	}
+	if s3Cfg.Profile != "" {
+		opts = append(opts, config.WithSharedConfigProfile(s3Cfg.Profile))
+	}
+	if s3Cfg.AccessKeyID != "" {
+		opts = append(opts, config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(s3Cfg.AccessKeyID, s3Cfg.SecretAccessKey, s3Cfg.SessionToken),
+		))
+	}
+
+	cfg, err := config.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, err
+	}
+
+	if s3Cfg.Endpoint != "" {
+		cfg.BaseEndpoint = aws.String(s3Cfg.Endpoint)
 	}
 
 	return &S3{

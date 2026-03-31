@@ -17,7 +17,7 @@ Release: `CGO_ENABLED=0 go build -ldflags "-s -w"`. No Makefile/linter/Dockerfil
 
 ## Architecture
 
-- **`main.go`** — CLI via `alecthomas/kong` + YAML config. `Globals` struct for flags. Inline `version` subcommand.
+- **`main.go`** — CLI via `alecthomas/kong` + YAML config (`$SRR_CONFIG` or `$XDG_CONFIG_HOME/srr/srr.yaml`). `Globals` struct for flags. Inline `version` subcommand.
 - **`cmd_fetch.go`** — `signal.NotifyContext` for graceful shutdown, channel-based worker pool (`globals.Workers` goroutines). Articles sorted by published time (ascending) before storage. Order: `PutArticles` → `UpdateTS` → `Commit`.
 - **`feed.go`** — Streaming XML parser, auto-detects RSS/Atom/RDF. GUIDs: FNV-32a → `uint32` (fallback: GUID → ID → Link → empty hash).
 - **`cmd_subs.go`** — `AddCmd` (add/update subscription via `--upd`, `-t/--title`, `-u/--url`, `-g/--tag`, `-p/--parsers`), `RmCmd`, `LsCmd` (filter by `-g/--tag`, yaml/json output).
@@ -27,7 +27,7 @@ Release: `CGO_ENABLED=0 go build -ldflags "-s -w"`. No Makefile/linter/Dockerfil
 
 ### Backend (`backend/`)
 
-Low-level storage interface: `Get`/`Put`/`AtomicPut`/`Rm`/`Close`. Registry selects by URL scheme; local = empty scheme `""`.
+Low-level storage interface: `Get`/`Put`/`AtomicPut`/`Rm`/`Close`. Registry selects by URL scheme; local = empty scheme `""`. Config registry: backends call `RegisterConfig` in `init()` with a config struct pointer; `LoadConfigs` reads YAML sections into them.
 
 | Method | Behavior |
 |---|---|
@@ -36,8 +36,8 @@ Low-level storage interface: `Get`/`Put`/`AtomicPut`/`Rm`/`Close`. Registry sele
 | `AtomicPut` | temp-then-rename (local/SFTP); overwrite (S3) |
 
 - **`local.go`** — Auto-creates subdirs via `os.MkdirAll`.
-- **`s3.go`** — `IfNoneMatch` precondition headers + CRC32 checksums.
-- **`sftp.go`** — Auth chain: URL password → `~/.ssh/` keys → SSH agent → error.
+- **`s3.go`** — `IfNoneMatch` precondition headers + CRC32 checksums. `S3Config`: region, endpoint, profile, static credentials.
+- **`sftp.go`** — Auth chain: URL password → config password → config/default private key → `~/.ssh/` keys → SSH agent → error. Host key verification via `~/.ssh/known_hosts` by default (`SFTPConfig.Insecure` to skip).
 
 ### Pack Storage (`db.go`)
 

@@ -16,10 +16,22 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+var sftpCfg SFTPConfig
+
+type SFTPConfig struct {
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	PrivateKey     string `yaml:"private-key"`
+	KnownHostsFile string `yaml:"known-hosts-file"`
+	Insecure       bool   `yaml:"insecure"`
+}
 
 func init() {
 	Register("sftp", newSFTP)
+	RegisterConfig("sftp", &sftpCfg)
 }
 
 type SFTP struct {
@@ -29,10 +41,29 @@ type SFTP struct {
 	sshClient *ssh.Client
 }
 
+func sftpHostKeyCallback() (ssh.HostKeyCallback, error) {
+	if sftpCfg.Insecure {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
+	khFile := sftpCfg.KnownHostsFile
+	if khFile == "" {
+		home, _ := os.UserHomeDir()
+		khFile = filepath.Join(home, ".ssh", "known_hosts")
+	}
+
+	return knownhosts.New(khFile)
+}
+
 func newSFTP(_ context.Context, u *url.URL) (_ Backend, retErr error) {
 	auth, err := sftpAuthMethods(u)
 	if err != nil {
 		return nil, err
+	}
+
+	hostKeyCallback, err := sftpHostKeyCallback()
+	if err != nil {
+		return nil, fmt.Errorf("loading known hosts: %w", err)
 	}
 
 	addr := u.Host
@@ -43,7 +74,7 @@ func newSFTP(_ context.Context, u *url.URL) (_ Backend, retErr error) {
 	sshClient, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
 		User:            sftpUser(u),
 		Auth:            auth,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         30 * time.Second,
 	})
 	if err != nil {
@@ -174,6 +205,9 @@ func sftpUser(u *url.URL) string {
 	if u.User != nil && u.User.Username() != "" {
 		return u.User.Username()
 	}
+	if sftpCfg.User != "" {
+		return sftpCfg.User
+	}
 	if user := os.Getenv("USER"); user != "" {
 		return user
 	}
@@ -187,17 +221,31 @@ func sftpAuthMethods(u *url.URL) ([]ssh.AuthMethod, error) {
 		if pw, ok := u.User.Password(); ok {
 			methods = append(methods, ssh.Password(pw))
 		}
+	} else if sftpCfg.Password != "" {
+		methods = append(methods, ssh.Password(sftpCfg.Password))
 	}
 
-	home, _ := os.UserHomeDir()
-	for _, name := range []string{"id_rsa", "id_ed25519", "id_ecdsa", "id_ecdsa_sk", "id_ed25519_sk"} {
-		pem, err := os.ReadFile(filepath.Join(home, ".ssh", name))
+	if sftpCfg.PrivateKey != "" {
+		pem, err := os.ReadFile(sftpCfg.PrivateKey)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("reading private key %s: %w", sftpCfg.PrivateKey, err)
 		}
-		if key, err := ssh.ParsePrivateKey(pem); err == nil {
-			methods = append(methods, ssh.PublicKeys(key))
-			break
+		key, err := ssh.ParsePrivateKey(pem)
+		if err != nil {
+			return nil, fmt.Errorf("parsing private key %s: %w", sftpCfg.PrivateKey, err)
+		}
+		methods = append(methods, ssh.PublicKeys(key))
+	} else {
+		home, _ := os.UserHomeDir()
+		for _, name := range []string{"id_rsa", "id_ed25519", "id_ecdsa", "id_ecdsa_sk", "id_ed25519_sk"} {
+			pem, err := os.ReadFile(filepath.Join(home, ".ssh", name))
+			if err != nil {
+				continue
+			}
+			if key, err := ssh.ParsePrivateKey(pem); err == nil {
+				methods = append(methods, ssh.PublicKeys(key))
+				break
+			}
 		}
 	}
 
